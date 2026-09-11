@@ -28,7 +28,7 @@ from deep_research.runner import DeepResearchRunner
 from evaluation.llm_judge import judge_one
 
 
-app = FastAPI(title="Tianchi Deep Research Agent")
+app = FastAPI(title="EvidenceFlow Agent")
 PROJECT_ROOT = Path(__file__).resolve().parent
 VISUALIZER_HTML = PROJECT_ROOT / "web" / "research_visualizer.html"
 
