@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from openai import AsyncOpenAI
 
 from deep_research.runtime_logging import emit_runtime_log
+from deep_research.llm_config import selected_provider
 
 
 class LLMClient(Protocol):
@@ -30,7 +31,7 @@ class DashScopeLLM:
         self.model = model or os.getenv("QWEN_MODEL", "qwen-max")
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not set")
-        self.client = AsyncOpenAI(base_url=base_url, api_key=self.api_key)
+        self.client = AsyncOpenAI(base_url=base_url, api_key=self.api_key, timeout=60.0, max_retries=2)
         self._usage_totals = {
             "calls": 0,
             "prompt_tokens": 0,
@@ -43,6 +44,13 @@ class DashScopeLLM:
         started = time.monotonic()
         model = kwargs.pop("model", self.model)
         temperature = kwargs.pop("temperature", 0.1)
+        thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower()
+        if thinking:
+            if thinking not in {"true", "false"}:
+                raise ValueError("QWEN_ENABLE_THINKING must be true or false")
+            extra_body = dict(kwargs.get("extra_body") or {})
+            extra_body.setdefault("enable_thinking", thinking == "true")
+            kwargs["extra_body"] = extra_body
         response = await self.client.chat.completions.create(
             model=model,
             messages=messages,
@@ -65,6 +73,9 @@ class DashScopeLLM:
 
     def get_usage(self) -> dict[str, Any]:
         return dict(self._usage_totals)
+
+    async def close(self) -> None:
+        await self.client.close()
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
         self._usage_totals["calls"] += 1
@@ -102,6 +113,59 @@ def estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
     for message in messages:
         total_chars += len(str(message.get("role", ""))) + len(str(message.get("content", "")))
     return max(1, int(total_chars / 3.5))
+
+
+class OpenAILLM(DashScopeLLM):
+    """OpenAI Responses adapter retaining the existing complete()/usage contract."""
+
+    def __init__(self, *, api_key: str | None = None, model: str | None = None) -> None:
+        key = (api_key or os.getenv("OPENAI_API_KEY", "")).strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        super().__init__(api_key=key, model=model or os.getenv("OPENAI_MODEL", "").strip() or "gpt-6-astra",
+                         base_url="https://api.openai.com/v1")
+
+    async def complete(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:
+        started = time.monotonic()
+        model = kwargs.pop("model", self.model)
+        # Call sites set Qwen sampling defaults. Do not impose these on reasoning models.
+        kwargs.pop("temperature", None)
+        kwargs.pop("top_p", None)
+        if "max_tokens" in kwargs:
+            kwargs.setdefault("max_output_tokens", kwargs.pop("max_tokens"))
+        kwargs.setdefault("max_output_tokens", int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "8192")))
+        effort = os.getenv("OPENAI_REASONING_EFFORT", "").strip()
+        if effort:
+            kwargs.setdefault("reasoning", {"effort": effort})
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            fmt = dict(response_format)
+            if fmt.get("type") == "json_schema":
+                fmt = {"type": "json_schema", **fmt["json_schema"]}
+            kwargs.setdefault("text", {"format": fmt})
+        kwargs.setdefault("store", False)
+        response = await self.client.responses.create(model=model, input=messages, **kwargs)
+        content = response.output_text or ""
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            usage = {"prompt_tokens": int(raw_usage.input_tokens or 0),
+                     "completion_tokens": int(raw_usage.output_tokens or 0),
+                     "total_tokens": int(raw_usage.total_tokens or 0), "estimated": False}
+        else:
+            usage = self._extract_usage(response, messages, content)
+        self._record_usage(usage)
+        emit_runtime_log("llm_call_end", provider="openai", model=model, **usage,
+                         elapsed_seconds=round(time.monotonic() - started, 3))
+        if getattr(response, "status", None) != "completed":
+            raise RuntimeError(f"OpenAI response did not complete (status={response.status}); check output budget or service error")
+        if not content.strip():
+            raise RuntimeError("OpenAI returned no text (possibly a refusal); no answer was generated")
+        return content
+
+
+def create_llm(*, model: str | None = None) -> DashScopeLLM:
+    cls = OpenAILLM if selected_provider() == "openai" else DashScopeLLM
+    return cls(model=model)
 
 
 def strip_markdown_fence(text: str) -> str:

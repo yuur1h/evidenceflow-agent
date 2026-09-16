@@ -179,6 +179,7 @@
     .node.running { border-left-color: var(--blue); background: #eef4ff; }
     .node.success { border-left-color: var(--green); }
     .node.failed { border-left-color: var(--red); }
+    .node.partial { border-left-color: var(--amber); }
     .node.skipped { border-left-color: var(--amber); }
     .id, .small { color: var(--muted); font-size: 12px; line-height: 1.5; }
     .desc { font-size: 14px; line-height: 1.45; margin: 6px 0 8px; }
@@ -256,6 +257,7 @@
 	    .mini-node.running { border-left-color: var(--blue); background: #eef4ff; }
 	    .mini-node.success { border-left-color: var(--green); }
 	    .mini-node.failed { border-left-color: var(--red); }
+        .mini-node.partial { border-left-color: var(--amber); }
 	    .mini-node.skipped { border-left-color: var(--amber); }
 	    .eval-sources {
 	      display: grid;
@@ -327,6 +329,12 @@
       <section class="panel">
         <div class="panel-head"><h2>Search Query</h2><span class="small">/stream</span></div>
         <div class="panel-body">
+          <label for="taskMode">任务类型</label>
+          <select id="taskMode" style="width:100%;padding:10px;margin-bottom:12px">
+            <option value="multi_hop">多跳问答：解析线索，返回简洁答案</option>
+            <option value="fact_check">事实核查：核验声明，比较支持与反驳证据</option>
+            <option value="research">专题研究：分主题分析，生成研究报告</option>
+          </select>
           <label for="question">问题</label>
           <textarea id="question">Who is the author of the article that introduces the methodology of prosopography and demographic analysis of colonial social structures?</textarea>
           <div class="controls">
@@ -592,10 +600,14 @@
         const coverage = payload.coverage || {}; addTimeline("Coverage", coverage.complete ? "complete" : `missing: ${(coverage.missing || []).join(", ")}`);
       } else if (eventName === "Replan") {
         addTimeline("Replan", `round ${payload.round || ""}`); for (const node of payload.states || []) state.states.set(node.state_id, node); updateGraph();
+      } else if (eventName === "Error") {
+        setRunStatus("failed", "失败"); addTimeline("Error", payload.message || "研究未完成");
       } else if (eventName === "Final" || eventName === "Message") {
         el("answer").textContent = payload.answer || "";
         const meta = payload.metadata || {}; el("meta").textContent = meta.elapsed_seconds ? `${meta.elapsed_seconds}s` : "";
-        setRunStatus("done", "完成");
+        const incomplete = meta.research_status === "partial";
+        const failed = meta.research_status === "failed" || meta.failed;
+        setRunStatus(incomplete || failed ? "failed" : "done", failed ? "研究执行失败" : incomplete ? "研究未完成：证据不足" : "完成");
       }
     }
     function handleEvalEvent(eventName, payload) {
@@ -627,7 +639,7 @@
     }
     async function runResearch() {
       resetView(); setRunStatus("running", "运行中"); el("runButton").disabled = true;
-      const body = { question: el("question").value.trim(), max_concurrent: Number(el("maxConcurrent").value || 3), max_replans: Number(el("maxReplans").value || 2), max_adversarial_rounds: 1 };
+      const body = { question: el("question").value.trim(), task_mode: el("taskMode").value, max_concurrent: Number(el("maxConcurrent").value || 3), max_replans: Number(el("maxReplans").value || 2), max_adversarial_rounds: 1 };
       try { await consumeSse("/stream", body, handleRunEvent); } catch (error) { setRunStatus("failed", "失败"); addTimeline("Error", String(error)); } finally { el("runButton").disabled = false; }
     }
     async function runEvaluation() {

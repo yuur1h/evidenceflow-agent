@@ -32,6 +32,7 @@ class ResearchStateStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
+    PARTIAL = "partial"
     FAILED = "failed"
     SKIPPED = "skipped"
 
@@ -184,6 +185,9 @@ class CoverageReport:
     covered: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     failed_states: list[str] = field(default_factory=list)
+    partial_states: list[str] = field(default_factory=list)
+    blocked_states: list[str] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     missing_authoritative_sources: bool = False

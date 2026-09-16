@@ -11,7 +11,9 @@ from deep_research.adversarial.blue_agent import BlueAgent
 from deep_research.adversarial.loop import AdversarialLoop
 from deep_research.adversarial.red_agent import RedAgent
 from deep_research.compressor.compressor import ContextCompressor
-from deep_research.llm import DashScopeLLM, LLMClient
+from deep_research.llm import create_llm, LLMClient
+from deep_research.task_modes import TaskMode
+from deep_research.evidence_quality import usable_evidence, in_time_scope
 from deep_research.memory.long_term import MemoryEntry
 from deep_research.memory.memory_store import SharedMemoryStore
 from deep_research.planner import DeepResearchPlanner
@@ -37,6 +39,7 @@ class DeepResearchRunner:
         self,
         *,
         llm: LLMClient | None = None,
+        task_mode: TaskMode | str = TaskMode.MULTI_HOP,
         tool_executor: Any | None = None,
         embedder: Any | None = None,
         memory_db_path: str | None = None,
@@ -47,7 +50,9 @@ class DeepResearchRunner:
         state_timeout_seconds: int = 120,
         event_sink: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
-        self.llm = llm or DashScopeLLM()
+        self.task_mode = TaskMode(task_mode)
+        self._owns_llm = llm is None
+        self.llm = llm or create_llm()
         self.session_id = session_id or str(uuid.uuid4())
         self.max_concurrent = max(1, max_concurrent)
         self.max_replans = max(0, max_replans)
@@ -59,17 +64,18 @@ class DeepResearchRunner:
             embedder=embedder,
         )
         self.compressor = ContextCompressor(llm=self.llm)
-        self.planner = DeepResearchPlanner(self.llm)
+        self.planner = DeepResearchPlanner(self.llm, task_mode=self.task_mode)
         self.tool_executor = tool_executor or FunctionToolExecutor()
         self.worker = DeepResearchWorker(
             self.llm,
+            task_mode=self.task_mode,
             tool_executor=self.tool_executor,
             compressor=self.compressor,
         )
-        self.synthesizer = DeepResearchSynthesizer(self.llm, compressor=self.compressor)
+        self.synthesizer = DeepResearchSynthesizer(self.llm, compressor=self.compressor, task_mode=self.task_mode)
         self.adversarial = AdversarialLoop(
-            red_agent=RedAgent(self.llm),
-            blue_agent=BlueAgent(self.llm),
+            red_agent=RedAgent(self.llm, task_mode=self.task_mode),
+            blue_agent=BlueAgent(self.llm, task_mode=self.task_mode),
             max_rounds=max_adversarial_rounds,
         )
         self.state_history: list[dict[str, Any]] = []
@@ -115,14 +121,9 @@ class DeepResearchRunner:
                     )
                     batch = await self._run_ready_states(query, graph, ready, results)
                     results.extend(batch)
-                elif graph.has_pending():
-                    for state in graph.states():
-                        if state.status.value == "pending":
-                            graph.mark_skipped(state.state_id, "dependencies unavailable")
-                    break
 
                 self._transition(FSMState.COLLECTING)
-                self._collect_to_memory(query, results)
+                self._collect_to_memory(query, batch if ready else [])
 
                 self._transition(FSMState.COVERAGE_CHECK)
                 coverage_report = self._check_coverage(plan, graph, results)
@@ -150,6 +151,9 @@ class DeepResearchRunner:
                     and self.num_replans < self.max_replans
                 )
                 if not should_replan:
+                    for state in graph.states():
+                        if state.status.value == "pending":
+                            graph.mark_skipped(state.state_id, "dependencies unavailable; research budget exhausted")
                     if not graph.ready_states() and graph.all_terminal():
                         break
                     if self.num_replans >= self.max_replans:
@@ -181,7 +185,7 @@ class DeepResearchRunner:
             final_report = await self.synthesizer.synthesize(
                 query=query,
                 plan=plan,
-                results=results,
+                results=list({result.state_id: result for result in results}.values()),
                 state_history=self.state_history,
                 states=[state.to_dict() for state in graph.states()],
                 coverage=coverage_report.to_dict(),
@@ -203,7 +207,12 @@ class DeepResearchRunner:
                 num_states=len(graph.states()),
                 adversarial_rounds=len(final_report.critique_history),
             )
-            answer = extract_final_answer(final_report.content)
+            metadata["coverage_complete"] = coverage_report.complete
+            metadata["research_status"] = "complete" if coverage_report.complete else "partial"
+            if not coverage_report.complete:
+                final_report.content = self._label_incomplete(final_report.content, coverage_report)
+                final_report.confidence = min(final_report.confidence, 0.35)
+            answer = extract_final_answer(final_report.content) if self.task_mode == TaskMode.MULTI_HOP else final_report.content
             self._emit(
                 {
                     "type": "final",
@@ -238,6 +247,10 @@ class DeepResearchRunner:
                 ),
             )
 
+        finally:
+            if getattr(self, "_owns_llm", False):
+                await self.llm.close()
+
     async def _run_ready_states(
         self,
         query: str,
@@ -262,8 +275,12 @@ class DeepResearchRunner:
                     timeout=state.timeout_seconds or self.state_timeout_seconds,
                 )
                 self.num_searches += len(result.tool_calls)
+                result.state_id = state.state_id
                 if result.normalized_status() == "failed":
                     graph.mark_failed(state.state_id, result.error or result.summary)
+                elif result.normalized_status() != "resolved" or not any(usable_evidence(e) for e in result.evidence) or result.open_questions or result.conflicts:
+                    result.status = "partial"
+                    graph.mark_partial(state.state_id, "Unresolved questions, conflicts, or missing source-linked evidence")
                 else:
                     graph.mark_success(state.state_id)
                 self._emit(
@@ -342,52 +359,55 @@ class DeepResearchRunner:
         graph: ResearchStateGraph,
         results: list[WorkerResult],
     ) -> CoverageReport:
-        coverage = graph.coverage_status(plan.coverage_checklist)
-        failed_states = [state.state_id for state in graph.failed_states()]
-        open_questions = [
-            question
-            for result in results
-            for question in result.open_questions
-            if question
-        ]
-        raw_conflicts = [
-            conflict
-            for result in results
-            for conflict in result.conflicts
-            if conflict
-        ]
-        raw_conflicts.extend([record.claim_1 + " <-> " + record.claim_2 for record in self.memory_store.get_conflicts("open")])
-        conflicts = self._answer_relevant_conflicts(results, raw_conflicts)
-        has_primary = any(
-            str(evidence.get("evidence_type", "")).lower() == "primary"
-            for result in results
-            for evidence in result.evidence
-        )
-        needs_recency = "recency" in plan.coverage_checklist or any("最新" in flag or "时效" in flag for flag in plan.risk_flags)
-        has_date = any(evidence.get("date") for result in results for evidence in result.evidence)
-        complete = (
-            bool(coverage["complete"])
-            and not failed_states
-            and not conflicts
-            and not open_questions
-            and (has_primary or bool(results))
-            and (not needs_recency or has_date)
-        )
+        # Retries replace the current assessment, while full history stays in results.
+        latest = {result.state_id: result for result in results}
+        qualified = []
+        evidence_gaps = []
+        for state in graph.states():
+            result = latest.get(state.state_id)
+            if not result:
+                continue
+            evidence = [e for e in result.evidence if usable_evidence(e)]
+            if not evidence:
+                evidence_gaps.append(state.state_id)
+            if (state.status.value == "success" and result.normalized_status() == "resolved"
+                    and evidence and not result.open_questions and not result.conflicts):
+                qualified.append((state, evidence))
+        expected = list(dict.fromkeys(plan.coverage_checklist))
+        covered_tags = set()
+        for state, evidence in qualified:
+            for tag in state.coverage_tags:
+                if tag == "official" and not any(e.get("evidence_type") == "primary" for e in evidence):
+                    continue
+                if tag == "recency" and not any(in_time_scope(e, plan.scope) for e in evidence):
+                    continue
+                covered_tags.add(tag)
+        covered = [tag for tag in expected if tag in covered_tags]
+        missing = [tag for tag in expected if tag not in covered_tags]
+        failed = [s.state_id for s in graph.states() if s.status.value == "failed"]
+        partial = [s.state_id for s in graph.states() if s.status.value == "partial"]
+        blocked = [s.state_id for s in graph.states() if s.status.value in {"pending", "running", "skipped"}]
+        questions = list(dict.fromkeys(q for r in latest.values() for q in r.open_questions if q))
+        conflicts = list(dict.fromkeys(c for r in latest.values() for c in r.conflicts if c))
+        conflicts.extend(record.claim_1 + " <-> " + record.claim_2 for record in self.memory_store.get_conflicts("open"))
+        has_primary = any(e.get("evidence_type") == "primary" for _, evidence in qualified for e in evidence)
+        needs_recency = "recency" in expected or any("最新" in flag or "时效" in flag for flag in plan.risk_flags)
+        missing_recency = needs_recency and not any(
+            in_time_scope(e, plan.scope) for _, evidence in qualified for e in evidence)
+        if missing_recency and "recency" not in missing:
+            missing.append("recency")
         notes = []
         if not has_primary:
-            notes.append("缺少一手来源，已降低置信度。")
-        if needs_recency and not has_date:
-            notes.append("缺少发布日期或数据周期。")
+            notes.append("缺少标记为一手来源的有效证据；来源真实性仍需引用核验。")
+        if missing_recency:
+            notes.append("时效证据缺失、日期无效或不在范围内；需 scope.date_start/date_end 和证据 date（YYYY-MM-DD）。")
         return CoverageReport(
-            complete=complete,
-            covered=list(coverage["covered"]),
-            missing=list(coverage["missing"]),
-            failed_states=failed_states,
-            open_questions=open_questions,
-            conflicts=conflicts,
+            complete=bool(qualified) and not any([missing, failed, partial, blocked, evidence_gaps, questions, conflicts]),
+            covered=covered, missing=missing, failed_states=failed,
+            partial_states=partial, blocked_states=blocked, evidence_gaps=evidence_gaps,
+            open_questions=questions, conflicts=conflicts,
             missing_authoritative_sources=not has_primary,
-            missing_recency=needs_recency and not has_date,
-            notes=notes,
+            missing_recency=missing_recency, notes=notes,
         )
 
     def _has_sufficient_final_answer(
@@ -397,8 +417,9 @@ class DeepResearchRunner:
         results: list[WorkerResult],
         coverage: CoverageReport,
     ) -> bool:
-        allowed_missing = {"verification", "official", "recency", "source", "sources"}
-        if any(item not in allowed_missing for item in coverage.missing):
+        if self.task_mode != TaskMode.MULTI_HOP:
+            return False
+        if not coverage.complete or not graph.all_terminal():
             return False
         states_by_id = {state.state_id: state for state in graph.states()}
         for result in results:
@@ -431,16 +452,7 @@ class DeepResearchRunner:
         results: list[WorkerResult],
         conflicts: list[str],
     ) -> list[str]:
-        if not conflicts:
-            return []
-        candidates = self._resolved_candidate_terms(results)
-        if not candidates:
-            return conflicts
-        return [
-            conflict
-            for conflict in conflicts
-            if any(self._mentions_term(conflict, candidate) for candidate in candidates)
-        ]
+        return list(dict.fromkeys(conflicts))
 
     def _resolved_candidate_terms(self, results: list[WorkerResult]) -> list[str]:
         terms: list[str] = []
@@ -484,11 +496,14 @@ class DeepResearchRunner:
         results: list[WorkerResult],
         coverage: CoverageReport,
     ) -> None:
-        successful = [result.to_dict() for result in results if result.normalized_status() == "resolved"]
+        latest = {result.state_id: result for result in results}
+        successful = [result.to_dict() for result in latest.values() if result.normalized_status() == "resolved"]
         failed_states = []
-        for state in graph.failed_states():
+        for state in graph.states():
+            if state.status.value not in {"failed", "partial", "pending"}:
+                continue
             payload = state.to_dict()
-            payload["failure_reason"] = state.metadata.get("failure_reason", "")
+            payload["failure_reason"] = state.metadata.get("failure_reason") or state.metadata.get("incomplete_reason") or "dependencies unavailable"
             failed_states.append(payload)
         memory_context = self.memory_store.get_context_for_query(query, max_tokens=2500)
         new_states = await self.planner.replan(
@@ -496,15 +511,38 @@ class DeepResearchRunner:
             plan=plan,
             successful_results=successful,
             failed_states=failed_states,
-            coverage_gaps=coverage.missing,
+            coverage_gaps=list(dict.fromkeys([*coverage.missing, *coverage.open_questions, *coverage.conflicts])),
             conflicts=coverage.conflicts,
             memory_context=memory_context,
         )
+        graph.retry_incomplete()
         existing = {state.state_id for state in graph.states()}
         for state in new_states:
-            if state.state_id in existing:
-                state.state_id = f"{state.state_id}_replan_{self.num_replans}"
+            original_id = state.state_id
+            while state.state_id in existing:
+                state.state_id += f"_replan_{self.num_replans}"
+            if state.state_id != original_id:
+                for dependent in new_states:
+                    dependent.dependencies = [state.state_id if dep == original_id else dep for dep in dependent.dependencies]
+            existing.add(state.state_id)
             graph.add_state(state)
+
+    def _label_incomplete(self, content: str, coverage: CoverageReport) -> str:
+        import json
+        from deep_research.llm import extract_json_object
+        detail = "研究未完成，证据不足以支持确定结论。"
+        gaps = list(dict.fromkeys([*coverage.missing, *coverage.evidence_gaps,
+                                  *coverage.partial_states, *coverage.failed_states, *coverage.blocked_states]))
+        if gaps:
+            detail += "待补充：" + "、".join(gaps)
+        if self.task_mode == TaskMode.MULTI_HOP:
+            data = extract_json_object(content) or {}
+            data["candidate_answer"] = data.get("answer", "")
+            data["answer"] = "证据不足，暂无法确定答案"
+            data["confidence"] = "low"
+            data["uncertainty"] = detail
+            return json.dumps(data, ensure_ascii=False)
+        return "> " + detail + "\n\n" + content
 
     def _transition(self, state: FSMState, detail: dict[str, Any] | None = None) -> None:
         event = StateHistoryEvent(state=state.name, detail=detail or {}).to_dict()
@@ -529,6 +567,7 @@ class DeepResearchRunner:
     ) -> dict[str, Any]:
         return {
             "mode": "deep_research",
+            "task_mode": self.task_mode.value,
             "session_id": self.session_id,
             "num_states": num_states,
             "num_searches": self.num_searches,
@@ -536,6 +575,8 @@ class DeepResearchRunner:
             "adversarial_rounds": adversarial_rounds,
             "elapsed_seconds": round(elapsed_seconds, 3),
             "failed": failed,
+            "research_status": "failed" if failed else "partial",
+            "coverage_complete": False,
             "llm_usage": self._llm_usage(),
             "compression": self.compressor.get_stats(),
         }

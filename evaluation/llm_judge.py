@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from dotenv import load_dotenv
+load_dotenv(PROJECT_ROOT / ".env")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from deep_research.llm import DashScopeLLM, extract_json_object
+from deep_research.llm import create_llm, extract_json_object
 from deep_research.runner import DeepResearchRunner
 
 
@@ -167,7 +169,7 @@ async def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         pred_rows = load_jsonl(args.predictions)
 
     pred_by_id = index_predictions(pred_rows)
-    llm = DashScopeLLM(model=args.judge_model or os.getenv("JUDGE_MODEL") or os.getenv("QWEN_MODEL", "qwen-max"))
+    llm = create_llm(model=args.judge_model or os.getenv("JUDGE_MODEL") or None)
     semaphore = asyncio.Semaphore(args.judge_concurrency)
 
     async def judge_row(row: dict[str, Any], ordinal: int) -> dict[str, Any]:
@@ -213,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-agent", action="store_true", help="Run the current DeepResearchRunner before judging.")
     parser.add_argument("--limit", type=int, help="Evaluate only the first N rows after --start.")
     parser.add_argument("--start", type=int, default=0, help="Start offset in gold file.")
-    parser.add_argument("--judge-model", help="Judge model name. Defaults to JUDGE_MODEL or QWEN_MODEL.")
+    parser.add_argument("--judge-model", help="Judge model name. Defaults to JUDGE_MODEL or the selected provider model.")
     parser.add_argument("--judge-concurrency", type=int, default=2)
     parser.add_argument("--agent-concurrency", type=int, default=2)
     parser.add_argument("--max-replans", type=int, default=2)

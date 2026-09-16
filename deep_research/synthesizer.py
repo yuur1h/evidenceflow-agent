@@ -6,13 +6,14 @@ from typing import Any
 
 from deep_research.compressor.compressor import ContextCompressor
 from deep_research.llm import LLMClient, extract_json_object
-from deep_research.prompts import SYNTHESIZER_SYSTEM_PROMPT
+from deep_research.task_modes import TaskMode, stage_prompt, output_contract
 from deep_research.schemas import ResearchPlan, ResearchReport, WorkerResult, confidence_to_float
 
 
 class DeepResearchSynthesizer:
-    def __init__(self, llm: LLMClient, *, compressor: ContextCompressor | None = None) -> None:
+    def __init__(self, llm: LLMClient, *, compressor: ContextCompressor | None = None, task_mode: TaskMode | str = TaskMode.MULTI_HOP) -> None:
         self.llm = llm
+        self.task_mode = TaskMode(task_mode)
         self.compressor = compressor or ContextCompressor(llm=None)
 
     async def synthesize(
@@ -40,20 +41,21 @@ class DeepResearchSynthesizer:
 证据：
 {"\n\n".join(compressed)}
 
-请直接输出严格 JSON，不要输出 Markdown，不要输出解释性前后缀。"""
+{output_contract(self.task_mode)}"""
         try:
             content = await self.llm.complete(
                 [
-                    {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
+                    {"role": "system", "content": stage_prompt("synthesizer", self.task_mode)},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
             )
         except Exception:
-            content = self._fallback_report(query, results, coverage)
+            content = self._mode_fallback(query, results, coverage)
         if not content.strip():
-            content = self._fallback_report(query, results, coverage)
-        content = self._ensure_answer_json(content, results, coverage, query=query)
+            content = self._mode_fallback(query, results, coverage)
+        if self.task_mode == TaskMode.MULTI_HOP:
+            content = self._ensure_answer_json(content, results, coverage, query=query)
         return ResearchReport(
             query=query,
             content=content,
@@ -64,6 +66,16 @@ class DeepResearchSynthesizer:
             coverage=coverage,
             critique_history=critique_history or [],
         )
+
+    def _mode_fallback(self, query: str, results: list[WorkerResult], coverage: dict[str, Any]) -> str:
+        if self.task_mode == TaskMode.MULTI_HOP:
+            return self._fallback_report(query, results, coverage)
+        title = "事实核查" if self.task_mode == TaskMode.FACT_CHECK else "专题研究"
+        evidence = self._build_evidence_context(results) or "尚未取得可用证据。"
+        return (f"# {title}\n\n## 问题\n{query}\n\n## 结论\n"
+                f"证据不足，报告生成未完成。以下内容仅为已收集材料，不代表核验完成。\n\n"
+                f"## 已收集材料\n{evidence}\n\n## 局限\n"
+                f"缺失维度：{', '.join(coverage.get('missing', [])) or '需进一步核验'}")
 
     @staticmethod
     def _build_evidence_context(results: list[WorkerResult]) -> str:

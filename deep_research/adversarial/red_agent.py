@@ -7,11 +7,13 @@ from deep_research.adversarial.verdict import RedVerdict
 from deep_research.llm import LLMClient, extract_json_object
 from deep_research.prompts import RED_AGENT_SYSTEM_PROMPT
 from deep_research.schemas import ResearchReport
+from deep_research.task_modes import TaskMode, stage_prompt
 
 
 class RedAgent:
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, *, task_mode: TaskMode | str = TaskMode.MULTI_HOP) -> None:
         self.llm = llm
+        self.task_mode = TaskMode(task_mode)
 
     async def attack(self, report: ResearchReport) -> RedVerdict:
         prompt = f"""原始问题：{report.query}
@@ -27,7 +29,7 @@ class RedAgent:
         try:
             raw = await self.llm.complete(
                 [
-                    {"role": "system", "content": RED_AGENT_SYSTEM_PROMPT},
+                    {"role": "system", "content": stage_prompt("review", self.task_mode) + "\n以上格式用于被审阅的报告；你自己的输出必须遵循下面的评审 JSON。\n" + RED_AGENT_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.0,

@@ -6,7 +6,7 @@ from typing import Any
 
 from deep_research.compressor.compressor import ContextCompressor
 from deep_research.llm import LLMClient, extract_json_object
-from deep_research.prompts import WORKER_SYSTEM_PROMPT
+from deep_research.task_modes import TaskMode, stage_prompt
 from deep_research.schemas import ResearchState, WorkerResult
 from deep_research.tool_adapter import FunctionToolExecutor, safe_json_dumps
 
@@ -18,8 +18,10 @@ class DeepResearchWorker:
         *,
         tool_executor: Any | None = None,
         compressor: ContextCompressor | None = None,
+        task_mode: TaskMode | str = TaskMode.MULTI_HOP,
     ) -> None:
         self.llm = llm
+        self.task_mode = TaskMode(task_mode)
         self.tool_executor = tool_executor or FunctionToolExecutor()
         self.compressor = compressor or ContextCompressor(llm=None)
 
@@ -60,7 +62,7 @@ class DeepResearchWorker:
         try:
             raw = await self.llm.complete(
                 [
-                    {"role": "system", "content": WORKER_SYSTEM_PROMPT},
+                    {"role": "system", "content": stage_prompt("worker", self.task_mode)},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
@@ -241,7 +243,7 @@ class DeepResearchWorker:
   "status": "resolved|partial|failed",
   "state_id": "{state.state_id}",
   "summary": "...",
-  "candidate_answer": "当前节点识别出的候选对象；若本节点不能直接给出则为空字符串",
+  "candidate_answer": "当前节点的候选答案或结论；不能判定时为空字符串",
   "key_findings": ["..."],
   "evidence": [
     {{
@@ -257,7 +259,7 @@ class DeepResearchWorker:
   "open_questions": ["..."],
   "recommended_followups": ["..."],
   "canonical_names": ["候选对象的标准名、英文名、别名等"],
-	  "answer_form_hint": "题目最终答案应使用的人名/公司英文名称/设备英文名等格式"
+	  "answer_form_hint": "多跳问答的答案格式；事实核查和专题研究留空"
 	}}"""
 
     @staticmethod

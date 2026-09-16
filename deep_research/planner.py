@@ -5,17 +5,15 @@ import re
 from typing import Any
 
 from deep_research.llm import LLMClient, extract_json_object
-from deep_research.prompts import (
-    PLANNER_SYSTEM_PROMPT,
-    PLANNER_USER_TEMPLATE,
-    REPLANNER_SYSTEM_PROMPT,
-)
+from deep_research.prompts import PLANNER_USER_TEMPLATE
 from deep_research.schemas import ResearchPlan, ResearchState, ResearchStateType
+from deep_research.task_modes import TaskMode, MODE_COVERAGE, MODE_GOALS, stage_prompt
 
 
 class DeepResearchPlanner:
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, *, task_mode: TaskMode | str = TaskMode.MULTI_HOP) -> None:
         self.llm = llm
+        self.task_mode = TaskMode(task_mode)
 
     async def create_plan(self, query: str, memory_context: str = "") -> ResearchPlan:
         prompt = PLANNER_USER_TEMPLATE.format(
@@ -25,7 +23,7 @@ class DeepResearchPlanner:
         try:
             raw = await self.llm.complete(
                 [
-                    {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+                    {"role": "system", "content": stage_prompt("planner", self.task_mode)},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
@@ -60,7 +58,7 @@ class DeepResearchPlanner:
         try:
             raw = await self.llm.complete(
                 [
-                    {"role": "system", "content": REPLANNER_SYSTEM_PROMPT},
+                    {"role": "system", "content": stage_prompt("replanner", self.task_mode)},
                     {
                         "role": "user",
                         "content": "请基于以下状态输出新增或替换 states：\n"
@@ -87,7 +85,7 @@ class DeepResearchPlanner:
 
     def _parse_plan(self, query: str, data: dict[str, Any]) -> ResearchPlan:
         states = self._parse_states(data.get("states", []), prefix="state")
-        if not any(state.state_type == ResearchStateType.VERIFY for state in states):
+        if self.task_mode == TaskMode.MULTI_HOP and not any(state.state_type == ResearchStateType.VERIFY for state in states):
             states.append(
                 ResearchState(
                     state_id="state_verify",
@@ -100,6 +98,21 @@ class DeepResearchPlanner:
                     priority=99,
                 )
             )
+        if self.task_mode != TaskMode.MULTI_HOP:
+            required = self._infer_coverage(query)
+            if not states:
+                return self._fallback_plan(query)
+            present = {tag for state in states for tag in state.coverage_tags}
+            used_ids = {state.state_id for state in states}
+            for index, tag in enumerate(required):
+                if tag not in present:
+                    state_id = f"mode_{tag}_{index}"
+                    while state_id in used_ids:
+                        state_id += "_extra"
+                    used_ids.add(state_id)
+                    states.append(self._mode_state(query, tag, state_id))
+            data = dict(data)
+            data["coverage_checklist"] = list(dict.fromkeys([*data.get("coverage_checklist", []), *required]))
         return ResearchPlan(
             query=query,
             research_intent=str(data.get("research_intent", query)),
@@ -136,6 +149,14 @@ class DeepResearchPlanner:
         return states
 
     def _fallback_plan(self, query: str) -> ResearchPlan:
+        if self.task_mode != TaskMode.MULTI_HOP:
+            coverage = self._infer_coverage(query)
+            return ResearchPlan(
+                query=query, research_intent=MODE_GOALS[self.task_mode],
+                coverage_checklist=coverage,
+                states=[self._mode_state(query, tag, f"state_{i}") for i, tag in enumerate(coverage, 1)],
+                risk_flags=["planner_fallback"], raw_plan={"fallback": True},
+            )
         states = [
             ResearchState(
                 state_id="state_1",
@@ -192,7 +213,7 @@ class DeepResearchPlanner:
                     backtrack_reason=f"coverage gap: {gap}",
                 )
             )
-        relevant_conflicts = self._filter_conflicts_by_successful_candidates(conflicts, successful_results or [])
+        relevant_conflicts = self._filter_conflicts_by_successful_candidates(conflicts, successful_results or []) if self.task_mode == TaskMode.MULTI_HOP else conflicts
         for idx, conflict in enumerate(relevant_conflicts, 1):
             states.append(
                 ResearchState(
@@ -264,9 +285,28 @@ class DeepResearchPlanner:
             return needle in lowered
         return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", lowered) is not None
 
-    @staticmethod
-    def _infer_coverage(query: str) -> list[str]:
+    def _mode_state(self, query: str, tag: str, state_id: str) -> ResearchState:
+        descriptions = {
+            "supporting_evidence": "寻找支持待核查声明的原始证据",
+            "counter_evidence": "主动寻找反驳声明的证据与反例",
+            "verdict": "核验声明的适用范围、日期和语境，为逐项判定提供证据",
+            "scope": "查明研究对象、时间范围与关键背景，标注范围假设",
+            "findings": "检索各主题或比较对象的具体事实与数据",
+            "synthesis": "检索支撑跨主题比较与综合结论的证据",
+            "limitations": "检索风险、反例与证据局限",
+            "recency": "核验来源日期与问题要求的数据周期",
+        }
+        description = f"{descriptions.get(tag, tag)}：{query}"
+        return ResearchState(state_id=state_id, state_type="search", description=description,
+                             search_queries=[description], coverage_tags=[tag])
+
+    def _infer_coverage(self, query: str) -> list[str]:
         lowered = query.lower()
+        if self.task_mode != TaskMode.MULTI_HOP:
+            checklist = list(MODE_COVERAGE[self.task_mode])
+            if any(word in lowered for word in ["最新", "当前", "近一年", "today", "current", "latest"]):
+                checklist.append("recency")
+            return checklist
         checklist = ["official", "verification"]
         if any(word in query for word in ["风险", "合规", "监管"]) or "risk" in lowered:
             checklist.append("risk")

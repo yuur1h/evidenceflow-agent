@@ -7,6 +7,8 @@ Import all tools from submodules and expose them as a unified list.
 import logging
 import os
 
+from deep_research.llm_config import model_configured
+
 BROWSER_TOOLS = []
 SANDBOX_TOOLS = []
 WEBPAGE_ANALYZER_TOOLS = []
@@ -22,8 +24,8 @@ if os.getenv("PLAYWRIGHT_MCP_URL"):
         logging.warning(f"Browser tools unavailable (missing dependency): {e}")
         BROWSER_TOOLS = []
 
-# Load webpage analyzer tools (requires DASHSCOPE_API_KEY + JINA_API_KEY)
-if os.getenv("DASHSCOPE_API_KEY") and os.getenv("JINA_API_KEY"):
+# Load webpage analyzer for the selected model provider + Jina
+if model_configured() and os.getenv("JINA_API_KEY"):
     try:
         from tools.webpage_analyzer import WEBPAGE_ANALYZER_TOOLS
     except ImportError as e:

@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any, Optional
 
-from openai import AsyncOpenAI
+from deep_research.llm import create_llm
 
 from deep_research.runtime_logging import emit_runtime_log
 
@@ -129,16 +129,6 @@ async def _fetch_content(url: str) -> tuple[Optional[str], Optional[str]]:
 
 async def _analyze_with_llm(content: str, url: str, question: str) -> str:
     """Use LLM to analyze webpage content against the research question."""
-    api_key = os.getenv("DASHSCOPE_API_KEY")
-    if not api_key:
-        return _fallback_payload(url, content[:800], "DASHSCOPE_API_KEY not set.")
-
-    model = os.getenv("QWEN_MODEL") or "qwen-max"
-    client = AsyncOpenAI(
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        api_key=api_key,
-    )
-
     user_message = f"""## Research Question
 {question}
 
@@ -151,19 +141,14 @@ async def _analyze_with_llm(content: str, url: str, question: str) -> str:
 
     started = time.monotonic()
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
+        llm = create_llm()
+        try:
+            raw = await llm.complete([
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
-            ],
-            temperature=0.1,
-        )
-        raw = response.choices[0].message.content or ""
-        _emit_llm_usage(response, model=model, messages=[
-            {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ], content=raw, elapsed_seconds=round(time.monotonic() - started, 3))
+            ], temperature=0.1)
+        finally:
+            await llm.close()
         cleaned = _strip_code_fence(raw)
         data = json.loads(cleaned)
         if not isinstance(data, dict):

@@ -18,13 +18,15 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from deep_research.llm import DashScopeLLM
+from deep_research.llm import create_llm
+from deep_research.llm_config import selected_provider, key_variable, model_name
 from deep_research.runtime_logging import emit_runtime_log
 from deep_research.runner import DeepResearchRunner
+from deep_research.task_modes import TaskMode
 from evaluation.llm_judge import judge_one
 
 
@@ -40,6 +42,7 @@ class QueryRequest(BaseModel):
             "example": {
                 "question": "请研究某行业近一年市场变化、竞品和风险",
                 "deep_research": True,
+                "task_mode": "research",
                 "session_id": "demo-session",
                 "max_concurrent": 3,
                 "max_replans": 2,
@@ -50,6 +53,7 @@ class QueryRequest(BaseModel):
     )
 
     question: str
+    task_mode: TaskMode = TaskMode.MULTI_HOP
     deep_research: bool = True
     session_id: str | None = None
     max_concurrent: int = 3
@@ -81,6 +85,7 @@ class EvaluationRequest(BaseModel):
 
 def _build_runner(req: QueryRequest, event_sink=None) -> DeepResearchRunner:
     return DeepResearchRunner(
+        task_mode=req.task_mode,
         session_id=req.session_id,
         max_concurrent=req.max_concurrent,
         max_replans=req.max_replans,
@@ -140,7 +145,10 @@ async def evaluate_stream(req: EvaluationRequest) -> StreamingResponse:
 async def ag_ui(payload: dict[str, Any]) -> StreamingResponse:
     """Compatibility endpoint that maps AG-UI-like payloads to a Deep Research run."""
     question = _extract_question_from_agui(payload)
-    req = QueryRequest(question=question or "", deep_research=True)
+    try:
+        req = QueryRequest.model_validate({"question": question or "", "task_mode": payload.get("task_mode", "multi_hop"), "deep_research": True})
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
     return StreamingResponse(_stream_result(req), media_type="text/event-stream")
 
 
@@ -175,17 +183,21 @@ async def _stream_result(req: QueryRequest):
         queue.put_nowait(event)
 
     async def run_and_finish() -> None:
-        result = await _run_request(req, event_sink=event_sink)
-        payload = result.to_dict()
-        queue.put_nowait(
-            {
-                "type": "message",
-                "answer": payload["answer"],
-                "report": None if req.return_markdown_only else payload.get("report"),
-                "metadata": payload.get("metadata"),
-            }
-        )
-        queue.put_nowait(None)
+        try:
+            result = await _run_request(req, event_sink=event_sink)
+            payload = result.to_dict()
+            queue.put_nowait(
+                {
+                    "type": "message",
+                    "answer": payload["answer"],
+                    "report": None if req.return_markdown_only else payload.get("report"),
+                    "metadata": payload.get("metadata"),
+                }
+            )
+        except Exception as exc:
+            queue.put_nowait({"type": "error", "message": str(exc)})
+        finally:
+            queue.put_nowait(None)
 
     task = asyncio.create_task(run_and_finish())
     try:
@@ -199,7 +211,12 @@ async def _stream_result(req: QueryRequest):
                 break
             yield _sse(event)
     finally:
-        await task
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def _sse(event: dict[str, Any]) -> str:
@@ -220,6 +237,7 @@ def _event_name(event_type: str) -> str:
         "replan_result": "Replan",
         "final": "Final",
         "message": "Message",
+        "error": "Error",
         "eval_start": "EvalStart",
         "eval_checkpoint": "EvalCheckpoint",
         "eval_run_event": "EvalRunEvent",
@@ -245,7 +263,7 @@ async def _stream_evaluation(req: EvaluationRequest):
     correct = 0
     done_count = 0
     started = time.time()
-    judge_llm = DashScopeLLM(model=req.judge_model) if req.judge_model else DashScopeLLM()
+    judge_llm = create_llm(model=req.judge_model or os.getenv("JUDGE_MODEL") or None)
     yield _sse(
         {
             "type": "eval_start",
@@ -648,8 +666,9 @@ def _conda_status() -> dict[str, Any]:
 def _api_key_status() -> dict[str, Any]:
     groups = [
         {
-            "name": "DashScope/Qwen LLM",
-            "keys": ["DASHSCOPE_API_KEY"],
+            "name": "OpenAI LLM" if selected_provider() == "openai" else "DashScope/Qwen LLM",
+            "model": model_name(),
+            "keys": [key_variable()],
             "required": True,
             "purpose": "规划、worker 推理、答案合成和 judge",
         },

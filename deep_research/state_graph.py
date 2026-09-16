@@ -58,6 +58,7 @@ class ResearchStateGraph:
         return all(
             state.status in {
                 ResearchStateStatus.SUCCESS,
+                ResearchStateStatus.PARTIAL,
                 ResearchStateStatus.FAILED,
                 ResearchStateStatus.SKIPPED,
             }
@@ -69,6 +70,15 @@ class ResearchStateGraph:
 
     def mark_success(self, state_id: str) -> None:
         self._set_status(state_id, ResearchStateStatus.SUCCESS)
+
+    def mark_partial(self, state_id: str, reason: str = "") -> None:
+        self._states[state_id].metadata["incomplete_reason"] = reason
+        self._set_status(state_id, ResearchStateStatus.PARTIAL, {"reason": reason})
+
+    def retry_incomplete(self) -> None:
+        for state in self.states():
+            if state.status in {ResearchStateStatus.PARTIAL, ResearchStateStatus.FAILED}:
+                self._set_status(state.state_id, ResearchStateStatus.PENDING, {"reason": "retry after replan"})
 
     def mark_failed(self, state_id: str, reason: str = "") -> None:
         state = self._states[state_id]
