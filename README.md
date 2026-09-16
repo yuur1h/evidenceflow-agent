@@ -4,7 +4,7 @@
 
 面向需要跨来源检索和多步推理的问题，将研究过程组织成可观察的状态图，并保留证据、工具调用与执行日志。
 
-> 基于 [MarsChange/Search Pilot](https://github.com/MarsChange/search-pilot) 的个人复现与扩展分支。当前完成展示文档与名称整理；核心能力来自上游，端到端运行与评测待验证。[来源记录](UPSTREAM.md) · [完整上游文档](README.upstream.md)
+> 基于 [MarsChange/Search Pilot](https://github.com/MarsChange/search-pilot) 的个人复现与扩展分支。当前版本 **0.2.0**：新增任务模式、证据充分性检查和 OpenAI/Qwen 适配。离线回归通过；联网样例尚未取得完整证据链，准确率未评测。[版本记录](CHANGELOG.md) · [来源记录](UPSTREAM.md) · [完整上游文档](README.upstream.md)
 
 ## 工作流程
 
@@ -39,16 +39,41 @@ cp .env.template .env
 python -m uvicorn agent:app --host 127.0.0.1 --port 8000
 ```
 
-推荐 Python 3.12。模型需要 DashScope API Key，联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
+推荐 Python 3.12。模型支持 OpenAI（默认模板）或 DashScope。设置 `LLM_PROVIDER` 并填写对应密钥，详见 [OpenAI 配置](docs/openai-setup.md)。联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
 
 - 研究界面：`http://127.0.0.1:8000/visualize`
 - API 文档：`http://127.0.0.1:8000/docs`
 - 流式研究：`POST /stream`
 - 评测：`POST /evaluate-stream`
 
-配置、请求样例与评测格式见 [上游运行文档](README.upstream.md)。以上命令尚未在本分支完成联网验证。
+Qwen 配置见 [Qwen 接入说明](docs/qwen-setup.md)。配置、请求样例与评测格式见 [上游运行文档](README.upstream.md)。本分支实际验证范围见 [复现记录](REPRODUCTION.md)。
 
-## 后续开发计划
+## 已完成的改进
+
+### 本地优化第一步：任务模式
+
+研究页面新增任务类型选择；API 的 `task_mode` 支持：
+
+| 值 | 任务 | 输出 |
+| --- | --- | --- |
+| `multi_hop`（默认） | 多跳线索问答 | 简洁答案，报告中保留 JSON 依据 |
+| `fact_check` | 声明核查 | 包含支持、反驳证据和局限的 Markdown |
+| `research` | 专题或比较研究 | 包含范围、分析、来源和局限的 Markdown |
+
+`POST /`、`POST /stream`、`POST /ag-ui` 均可传入 `task_mode`。
+
+```json
+{"question":"比较两种储能技术的适用场景与局限", "task_mode":"research"}
+```
+
+旧请求和现有实体问答评测继续使用 `multi_hop`。模式需显式选择，当前没有自动分类或交互式澄清功能。事实核查和专题研究不使用实体短答案提前停止规则。
+
+离线验证：`.\.venv\Scripts\python.exe -m pytest tests/test_task_modes.py -q`。
+测试使用模拟模型和工具，仅验证流程与输出路由；真实模型效果仍待配置密钥后评测。
+
+### 本地优化第二步：证据充分性
+
+已区分 partial 与 success，增加有效来源与时效范围门槛，修复依赖阻塞时的补救流程。API 使用 `metadata.research_status` 和 `coverage_complete` 区分流程结束与研究完成；证据不足时明确返回未完成结果。详见 [第二步记录](docs/optimization-step-2.md)。逐条引用校验和置信度校准尚未完成。
 
 以下为待办，不是已完成能力：
 
