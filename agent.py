@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from deep_research.llm import create_llm
-from deep_research.llm_config import selected_provider, key_variable, model_name
+from deep_research.llm_config import display_name, key_variable, model_name, selected_provider
 from deep_research.runtime_logging import emit_runtime_log
 from deep_research.runner import DeepResearchRunner
 from deep_research.task_modes import TaskMode
@@ -666,7 +666,7 @@ def _conda_status() -> dict[str, Any]:
 def _api_key_status() -> dict[str, Any]:
     groups = [
         {
-            "name": "OpenAI LLM" if selected_provider() == "openai" else "DashScope/Qwen LLM",
+            "name": display_name(),
             "model": model_name(),
             "keys": [key_variable()],
             "required": True,

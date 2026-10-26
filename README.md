@@ -37,7 +37,7 @@ cp .env.template .env
 ./start-local.sh          # Windows 用 .\start-local.ps1
 ```
 
-没有 uv 时可用 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`。离线检查：`./dev.sh test`。模型支持 OpenAI（默认模板）或 DashScope。设置 `LLM_PROVIDER` 并填写对应密钥，详见 [OpenAI 配置](docs/openai-setup.md)。联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
+没有 uv 时可用 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`。离线检查：`./dev.sh test`。模型支持 OpenAI（默认模板）、DashScope 或 DeepSeek。设置 `LLM_PROVIDER` 并填写对应密钥，详见 [OpenAI 配置](docs/openai-setup.md)；DeepSeek 只需 `LLM_PROVIDER="deepseek"` 和 `DEEPSEEK_API_KEY`，默认模型 `deepseek-chat`。联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
 
 - 研究界面：`http://127.0.0.1:8000/visualize`
 - API 文档：`http://127.0.0.1:8000/docs`

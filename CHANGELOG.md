@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `LLM_PROVIDER=deepseek` using DeepSeek's OpenAI-compatible endpoint (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, optional `DEEPSEEK_BASE_URL`). Qwen thinking flags are not forwarded to it.
+
 ## 0.3.0 — 2026-10-27
 
 ### Added
