@@ -1,0 +1,25 @@
+{"id": "mh-01", "mode": "multi_hop", "lang": "en", "question": "Who wrote the novella on which the 1994 film The Shawshank Redemption is based?", "answer": "Stephen King"}
+{"id": "mh-02", "mode": "multi_hop", "lang": "zh", "question": "万维网的发明者在提出这一构想时任职于哪个研究机构？", "answer": "CERN（欧洲核子研究中心）"}
+{"id": "mh-03", "mode": "multi_hop", "lang": "en", "question": "The author of Pride and Prejudice was born in which English county?", "answer": "Hampshire"}
+{"id": "mh-04", "mode": "multi_hop", "lang": "zh", "question": "《百年孤独》的作者是在哪一年获得诺贝尔文学奖的？", "answer": "1982"}
+{"id": "mh-05", "mode": "multi_hop", "lang": "en", "question": "Which chemical element has an atomic number equal to the number of players one football (soccer) team fields at kickoff?", "answer": "Sodium"}
+{"id": "mh-06", "mode": "multi_hop", "lang": "zh", "question": "Python 语言的创始人在 2013 年加入了哪家公司？", "answer": "Dropbox"}
+{"id": "mh-07", "mode": "multi_hop", "lang": "en", "question": "What is the capital city of the country that hosted the 2016 Summer Olympics?", "answer": "Brasília"}
+{"id": "mh-08", "mode": "multi_hop", "lang": "en", "question": "The SI unit of force is named after which physicist?", "answer": "Isaac Newton"}
+{"id": "mh-09", "mode": "multi_hop", "lang": "en", "question": "The Apollo 11 mission launched from a space center named after which US president?", "answer": "John F. Kennedy"}
+{"id": "mh-10", "mode": "multi_hop", "lang": "zh", "question": "居里夫人第二次获得诺贝尔奖是在哪个学科？", "answer": "化学"}
+{"id": "mh-11", "mode": "multi_hop", "lang": "en", "question": "What is the currency of the country whose capital is Canberra?", "answer": "Australian dollar"}
+{"id": "mh-12", "mode": "multi_hop", "lang": "en", "question": "The programming language created by Guido van Rossum is named after which comedy group?", "answer": "Monty Python"}
+{"id": "fc-01", "mode": "fact_check", "lang": "en", "question": "The Great Wall of China is visible to the naked eye from low Earth orbit.", "verdict": "refuted"}
+{"id": "fc-02", "mode": "fact_check", "lang": "en", "question": "Mount Everest is the highest mountain on Earth measured from sea level.", "verdict": "supported"}
+{"id": "fc-03", "mode": "fact_check", "lang": "en", "question": "Albert Einstein received the Nobel Prize in Physics for his theory of relativity.", "verdict": "refuted"}
+{"id": "fc-04", "mode": "fact_check", "lang": "zh", "question": "珠穆朗玛峰位于中国与尼泊尔的边界上。", "verdict": "supported"}
+{"id": "fc-05", "mode": "fact_check", "lang": "en", "question": "Python 3.0 was first released in 2008.", "verdict": "supported"}
+{"id": "fc-06", "mode": "fact_check", "lang": "zh", "question": "埃菲尔铁塔于 1889 年建成。", "verdict": "supported"}
+{"id": "fc-07", "mode": "fact_check", "lang": "zh", "question": "人类平时只使用了大脑的 10%。", "verdict": "refuted"}
+{"id": "fc-08", "mode": "fact_check", "lang": "en", "question": "The first-generation iPhone went on sale in 2010.", "verdict": "refuted"}
+{"id": "rs-01", "mode": "research", "lang": "zh", "question": "比较锂离子电池与钠离子电池在固定式储能场景中的适用性与局限。", "rubric": ["锂离子电池的能量密度高于钠离子电池", "钠资源储量丰富、原材料成本更低", "钠离子电池低温性能相对较好", "钠离子电池产业成熟度和循环寿命仍落后", "给出各自适用的储能场景并说明局限"]}
+{"id": "rs-02", "mode": "research", "lang": "en", "question": "Summarize the main causes of the 2008 global financial crisis.", "rubric": ["US subprime mortgage lending and the housing bubble", "securitization into mortgage-backed securities and CDOs", "excessive leverage at banks and failures of credit rating agencies", "the collapse of Lehman Brothers in September 2008", "gaps in financial regulation and oversight"]}
+{"id": "rs-03", "mode": "research", "lang": "en", "question": "Compare SQL and NoSQL databases as the primary store for a web application backend.", "rubric": ["schema rigidity versus flexible document or key-value models", "ACID transactions and consistency guarantees", "horizontal scaling and sharding characteristics", "query expressiveness and joins", "guidance on when to choose each"]}
+{"id": "rs-04", "mode": "research", "lang": "en", "question": "What are the documented long-term health effects of exposure to PM2.5 air pollution?", "rubric": ["cardiovascular disease", "respiratory disease including reduced lung function", "increased all-cause mortality", "the WHO 2021 annual guideline value of 5 micrograms per cubic metre", "vulnerable groups such as children and the elderly"]}
+{"id": "rs-05", "mode": "research", "lang": "zh", "question": "总结 Transformer 架构相对循环神经网络（RNN）的主要优势与局限。", "rubric": ["自注意力机制支持并行计算", "更好地建模长距离依赖", "注意力的计算和内存开销随序列长度二次增长", "需要位置编码来表示顺序", "对数据和算力的需求更高"]}

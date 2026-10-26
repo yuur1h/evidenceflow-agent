@@ -23,3 +23,4 @@ data/
 data/eval_checkpoints/
 data/**/eval_memory/
 AGENTS.md
+outputs/

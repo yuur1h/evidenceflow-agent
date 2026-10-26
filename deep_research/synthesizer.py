@@ -90,13 +90,15 @@ class DeepResearchSynthesizer:
                 blocks.append(f"答案格式提示: {result.answer_form_hint}")
             for evidence in result.evidence:
                 blocks.append(
-                    "- {claim}\n  来源: {source} {url} | 日期: {date} | 置信度: {confidence} | 类型: {evidence_type}".format(
+                    "- {claim}\n  来源: {source} {url} | 日期: {date} | 置信度: {confidence} | 类型: {evidence_type} | 溯源: {provenance} | 原文支持: {support}".format(
                         claim=evidence.get("claim", ""),
                         source=evidence.get("source", ""),
                         url=evidence.get("url", ""),
                         date=evidence.get("date", ""),
                         confidence=evidence.get("confidence", ""),
                         evidence_type=evidence.get("evidence_type", ""),
+                        provenance=evidence.get("provenance", "unchecked"),
+                        support=evidence.get("support", "unchecked"),
                     )
                 )
             if result.conflicts:
@@ -123,6 +125,8 @@ class DeepResearchSynthesizer:
                         "snippet": evidence.get("claim", ""),
                         "date": evidence.get("date", ""),
                         "state_id": result.state_id,
+                        "provenance": evidence.get("provenance", "unchecked"),
+                        "support": evidence.get("support", "unchecked"),
                     }
                 )
         return sources

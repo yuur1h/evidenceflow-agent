@@ -10,6 +10,8 @@
 | 三级语义压缩 | [semantic-compression.md](semantic-compression.md) | `deep_research/compressor/` |
 | 共享记忆数据库 SQLite + numpy | [shared-memory-store.md](shared-memory-store.md) | `deep_research/memory/` |
 | Red-Blue 双 Agent 攻防评审 | [red-blue-adversarial-review.md](red-blue-adversarial-review.md) | `deep_research/adversarial/` |
+| 证据充分性与补救流程 | [optimization-step-2.md](optimization-step-2.md) | `deep_research/runner.py`, `deep_research/evidence_quality.py` |
+| 引用溯源核验与评测集 | [optimization-step-3.md](optimization-step-3.md) | `deep_research/citation_check.py`, `evaluation/run_benchmark.py` |
 
 ## 总体执行链路
 

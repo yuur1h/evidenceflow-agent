@@ -1,6 +1,16 @@
 # 本地复现记录
 
-日期：2026-09-16。来源：yuur1h/evidenceflow-agent 的 main 分支源码 ZIP（不含 Git 历史）。
+## 2026-10-27，macOS（0.3.0）
+
+来源：yuur1h/evidenceflow-agent 的 Git 克隆。macOS 15（Apple Silicon），系统 Python 3.9 不满足要求，使用 uv 0.13 安装 Python 3.12 并按 `uv.lock` 建立 `.venv`（`./dev.sh setup`）。
+
+已验证：`./dev.sh test` 通过（92 个测试 + smoke 检查）；`/visualize`、`/docs`、`/openapi.json` 返回 200；缺少密钥时 `/stream` 返回 Error 事件并结束。未配置任何模型或搜索密钥，没有联网运行；评测集未执行。
+
+---
+
+## 2026-09-16，Windows（0.2.0）
+
+来源：yuur1h/evidenceflow-agent 的 main 分支源码 ZIP（不含 Git 历史）。
 
 ## 环境与启动
 

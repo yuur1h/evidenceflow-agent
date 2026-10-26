@@ -29,8 +29,10 @@ class FakeEmbedder:
 
 
 class NoTools:
+    """Returns the fixture source so scripted citations are tool-backed; nothing else."""
     async def search(self, query, **kwargs):
-        return {"results": []}
+        return {"tool": "search", "query": query,
+                "results": [{"title": "fixture", "url": "https://example.com", "snippet": "Fixture claim"}]}
 
 
 class ScriptedLLM:
@@ -42,6 +44,8 @@ class ScriptedLLM:
     async def complete(self, messages, **kwargs):
         system = messages[0]['content']
         self.prompts.append(system)
+        if '引用核验员' in system:
+            return '{"verdicts": []}'
         assert f"任务模式：{self.mode.value}" in system
         assert '/Users/marc/' not in system
         if '你负责生成' in system:
@@ -108,7 +112,6 @@ def test_entity_candidate_cannot_early_stop_report(mode):
     graph.add_state(ResearchState('s', 'search', 'x', coverage_tags=['final_answer']))
     candidate = WorkerResult(state_id='s', status='resolved', candidate_answer='Paris', evidence=[{'confidence': 'high'}])
     assert not runner._has_sufficient_final_answer(ResearchPlan('x', 'x'), graph, [candidate], CoverageReport(complete=False))
-    assert runner._answer_relevant_conflicts([candidate], ['Unrelated name but relevant factual conflict'])
 
 
 @pytest.mark.parametrize('mode', [TaskMode.FACT_CHECK, TaskMode.RESEARCH])

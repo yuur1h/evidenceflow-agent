@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 — 2026-10-27
+
+### Added
+- Citation provenance and support checks: every evidence URL must appear in the state's tool output, and claims are scored against the text seen there; unverified or unsupported items are downgraded and excluded from coverage. Weak items are re-judged by the model (`CITATION_LLM_CHECK`).
+- `metadata.citations` counts and provenance/support fields on report sources.
+- A 25-item benchmark set across the three task modes and `evaluation/run_benchmark.py` with per-mode scoring, cost fields and resumable output.
+- uv project (`pyproject.toml`, `uv.lock`), `dev.sh`, `start-local.sh` and a GitHub Actions workflow running the offline suite.
+
+### Fixed
+- Multi-hop early stop was unreachable; it now fires only when required coverage is met by verified evidence and only optional work remains.
+- Fallback replans dropped conflicts that did not mention a candidate name; every conflict now gets a verify state.
+- Memory entry IDs used the process-salted `hash()`; they use a stable digest.
+- `failure_rate()` counts partial states.
+
+### Validation and limitations
+- 92 offline tests and smoke checks pass. No live model or search run was performed in this release; benchmark scores, cost and the accuracy of model-based citation re-judging remain unmeasured.
+- Lexical support is a proxy, not entailment; `provenance=tool` does not assess source reliability.
+
 ## 0.2.0 — 2026-09-16
 
 ### Added
