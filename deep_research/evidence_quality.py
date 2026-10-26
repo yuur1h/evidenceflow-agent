@@ -2,9 +2,14 @@
 from datetime import date
 from urllib.parse import urlsplit
 
+from deep_research.citation_check import is_verified
+
 
 def usable_evidence(item: object) -> bool:
+    """Structurally valid and not rejected by citation checks (see citation_check)."""
     if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
+        return False
+    if not is_verified(item):
         return False
     try:
         url = urlsplit(str(item.get("url") or ""))

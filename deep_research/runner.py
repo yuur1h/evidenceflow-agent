@@ -13,6 +13,7 @@ from deep_research.adversarial.red_agent import RedAgent
 from deep_research.compressor.compressor import ContextCompressor
 from deep_research.llm import create_llm, LLMClient
 from deep_research.task_modes import TaskMode
+from deep_research.citation_check import citation_stats
 from deep_research.evidence_quality import usable_evidence, in_time_scope
 from deep_research.memory.long_term import MemoryEntry
 from deep_research.memory.memory_store import SharedMemoryStore
@@ -211,6 +212,8 @@ class DeepResearchRunner:
                 adversarial_rounds=len(final_report.critique_history),
             )
             metadata["coverage_complete"] = coverage_report.complete
+            metadata["citations"] = citation_stats(
+                [e for r in {r.state_id: r for r in results}.values() for e in r.evidence])
             metadata["research_status"] = "complete" if coverage_report.complete else "partial"
             if not coverage_report.complete:
                 final_report.content = self._label_incomplete(final_report.content, coverage_report)
@@ -402,6 +405,10 @@ class DeepResearchRunner:
         if missing_recency and "recency" not in missing:
             missing.append("recency")
         notes = []
+        stats = citation_stats([e for r in latest.values() for e in r.evidence])
+        if stats["unverified"] or stats["unsupported"]:
+            notes.append(f"引用核验：{stats['unverified']} 条引用的 URL 未出现在工具结果中，"
+                         f"{stats['unsupported']} 条陈述未被来源原文支持；这些证据不计入覆盖。")
         if not has_primary:
             notes.append("缺少标记为一手来源的有效证据；来源真实性仍需引用核验。")
         if missing_recency:

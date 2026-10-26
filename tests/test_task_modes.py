@@ -29,8 +29,10 @@ class FakeEmbedder:
 
 
 class NoTools:
+    """Returns the fixture source so scripted citations are tool-backed; nothing else."""
     async def search(self, query, **kwargs):
-        return {"results": []}
+        return {"tool": "search", "query": query,
+                "results": [{"title": "fixture", "url": "https://example.com", "snippet": "Fixture claim"}]}
 
 
 class ScriptedLLM:
@@ -42,6 +44,8 @@ class ScriptedLLM:
     async def complete(self, messages, **kwargs):
         system = messages[0]['content']
         self.prompts.append(system)
+        if '引用核验员' in system:
+            return '{"verdicts": []}'
         assert f"任务模式：{self.mode.value}" in system
         assert '/Users/marc/' not in system
         if '你负责生成' in system:

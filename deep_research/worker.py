@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
+from deep_research.citation_check import annotate_evidence, llm_entailment
 from deep_research.compressor.compressor import ContextCompressor
 from deep_research.llm import LLMClient, extract_json_object
 from deep_research.task_modes import TaskMode, stage_prompt
@@ -74,6 +76,7 @@ class DeepResearchWorker:
                 result.tool_calls = tool_calls
                 if not result.evidence:
                     result.evidence = self._evidence_from_tools(state, tool_calls)
+                await self._check_citations(result.evidence, tool_calls)
                 return result
         except Exception as exc:
             return WorkerResult(
@@ -100,6 +103,12 @@ class DeepResearchWorker:
             recommended_followups=[],
             tool_calls=tool_calls,
         )
+
+    async def _check_citations(self, evidence: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> None:
+        """Tie model-written citations back to tool output; unverified ones are downgraded, not deleted."""
+        annotate_evidence(evidence, tool_calls)
+        if os.getenv("CITATION_LLM_CHECK", "1").strip().lower() not in {"0", "false", "no", ""}:
+            await llm_entailment(self.llm, evidence, tool_calls)
 
     async def _search(self, query: str, *, state_id: str) -> dict[str, Any]:
         if hasattr(self.tool_executor, "search"):
@@ -306,6 +315,9 @@ class DeepResearchWorker:
                         "confidence": "medium",
                         "evidence_type": "secondary",
                         "state_id": state.state_id,
+                        "provenance": "tool",
+                        "support": "supported",
+                        "support_score": 1.0,
                     }
                 )
         return evidence[:8]
