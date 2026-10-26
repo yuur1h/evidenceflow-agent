@@ -1,0 +1,36 @@
+[project]
+name = "evidenceflow-agent"
+version = "0.3.0"
+description = "Evidence-driven research agent with state-graph planning, source tracking and evaluation."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "openai",
+    "pydantic",
+    "python-dotenv",
+    "pyyaml",
+    "requests",
+    "numpy",
+    "scikit-learn",
+    "networkx",
+    "pandas",
+    "sentence-transformers",
+    "wikipedia",
+    "markitdown",
+    "beautifulsoup4",
+    "mcp",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "httpx"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
