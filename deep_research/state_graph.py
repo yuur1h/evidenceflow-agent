@@ -95,6 +95,7 @@ class ResearchStateGraph:
             state for state in self._states.values()
             if state.status in {
                 ResearchStateStatus.SUCCESS,
+                ResearchStateStatus.PARTIAL,
                 ResearchStateStatus.FAILED,
                 ResearchStateStatus.SKIPPED,
             }

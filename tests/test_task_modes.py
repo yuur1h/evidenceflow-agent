@@ -108,7 +108,6 @@ def test_entity_candidate_cannot_early_stop_report(mode):
     graph.add_state(ResearchState('s', 'search', 'x', coverage_tags=['final_answer']))
     candidate = WorkerResult(state_id='s', status='resolved', candidate_answer='Paris', evidence=[{'confidence': 'high'}])
     assert not runner._has_sufficient_final_answer(ResearchPlan('x', 'x'), graph, [candidate], CoverageReport(complete=False))
-    assert runner._answer_relevant_conflicts([candidate], ['Unrelated name but relevant factual conflict'])
 
 
 @pytest.mark.parametrize('mode', [TaskMode.FACT_CHECK, TaskMode.RESEARCH])

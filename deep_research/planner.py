@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from deep_research.llm import LLMClient, extract_json_object
@@ -213,15 +212,15 @@ class DeepResearchPlanner:
                     backtrack_reason=f"coverage gap: {gap}",
                 )
             )
-        relevant_conflicts = self._filter_conflicts_by_successful_candidates(conflicts, successful_results or []) if self.task_mode == TaskMode.MULTI_HOP else conflicts
-        for idx, conflict in enumerate(relevant_conflicts, 1):
+        # Every unresolved conflict needs verification; a candidate name is not evidence.
+        for idx, conflict in enumerate(conflicts, 1):
             states.append(
                 ResearchState(
                     state_id=f"verify_conflict_{idx}",
                     state_type=ResearchStateType.VERIFY,
                     description=f"核查矛盾事实：{conflict}",
                     dependencies=[],
-                    search_queries=["conflict verification authoritative source"],
+                    search_queries=[conflict[:200]],
                     coverage_tags=["verification"],
                     priority=0,
                     backtrack_reason=f"conflict: {conflict}",
@@ -241,49 +240,6 @@ class DeepResearchPlanner:
                 )
             )
         return states
-
-    @classmethod
-    def _filter_conflicts_by_successful_candidates(
-        cls,
-        conflicts: list[str],
-        successful_results: list[dict[str, Any]],
-    ) -> list[str]:
-        candidates = cls._successful_candidate_terms(successful_results)
-        if not candidates:
-            return conflicts
-        return [
-            conflict
-            for conflict in conflicts
-            if any(cls._mentions_term(conflict, candidate) for candidate in candidates)
-        ]
-
-    @staticmethod
-    def _successful_candidate_terms(successful_results: list[dict[str, Any]]) -> list[str]:
-        terms: list[str] = []
-        seen: set[str] = set()
-        for result in successful_results:
-            if str(result.get("status", "")).lower() not in {"resolved", "success"}:
-                continue
-            raw_terms = [str(result.get("candidate_answer") or "")]
-            raw_terms.extend(str(item) for item in result.get("canonical_names", []) or [])
-            for term in raw_terms:
-                normalized = term.strip()
-                key = normalized.lower()
-                if len(normalized) < 3 or key in {"unknown", "n/a", "none", "null"} or key in seen:
-                    continue
-                terms.append(normalized)
-                seen.add(key)
-        return terms
-
-    @staticmethod
-    def _mentions_term(text: str, term: str) -> bool:
-        lowered = text.lower()
-        needle = term.lower().strip()
-        if not needle:
-            return False
-        if re.search(r"[\u4e00-\u9fff]", needle):
-            return needle in lowered
-        return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", lowered) is not None
 
     def _mode_state(self, query: str, tag: str, state_id: str) -> ResearchState:
         descriptions = {

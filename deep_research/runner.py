@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
-import re
 import time
 import uuid
 from typing import Any, Callable
@@ -32,6 +32,8 @@ from deep_research.state_graph import ResearchStateGraph
 from deep_research.tool_adapter import FunctionToolExecutor
 from deep_research.worker import DeepResearchWorker
 from deep_research.synthesizer import DeepResearchSynthesizer, extract_final_answer
+
+EARLY_STOP_REASON = "final answer already resolved"
 
 
 class DeepResearchRunner:
@@ -133,7 +135,8 @@ class DeepResearchRunner:
                 if self._has_sufficient_final_answer(plan, graph, results, coverage_report):
                     for state in graph.states():
                         if state.status.value == "pending":
-                            graph.mark_skipped(state.state_id, "final answer already resolved")
+                            graph.mark_skipped(state.state_id, EARLY_STOP_REASON)
+                    coverage_report = self._check_coverage(plan, graph, results)
                     self._emit(
                         {
                             "type": "early_stop",
@@ -338,7 +341,8 @@ class DeepResearchRunner:
                 if not claim:
                     continue
                 entry = MemoryEntry(
-                    entry_id=f"{result.state_id}:{idx}:{abs(hash(claim))}",
+                    # Built-in hash() is salted per process, so IDs must use a stable digest.
+                    entry_id=f"{result.state_id}:{idx}:{hashlib.sha1(claim.encode('utf-8')).hexdigest()[:16]}",
                     session_id=self.session_id,
                     claim=claim,
                     source=str(evidence.get("source", "")),
@@ -386,7 +390,8 @@ class DeepResearchRunner:
         missing = [tag for tag in expected if tag not in covered_tags]
         failed = [s.state_id for s in graph.states() if s.status.value == "failed"]
         partial = [s.state_id for s in graph.states() if s.status.value == "partial"]
-        blocked = [s.state_id for s in graph.states() if s.status.value in {"pending", "running", "skipped"}]
+        blocked = [s.state_id for s in graph.states() if s.status.value in {"pending", "running", "skipped"}
+                   and s.metadata.get("skip_reason") != EARLY_STOP_REASON]
         questions = list(dict.fromkeys(q for r in latest.values() for q in r.open_questions if q))
         conflicts = list(dict.fromkeys(c for r in latest.values() for c in r.conflicts if c))
         conflicts.extend(record.claim_1 + " <-> " + record.claim_2 for record in self.memory_store.get_conflicts("open"))
@@ -417,76 +422,40 @@ class DeepResearchRunner:
         results: list[WorkerResult],
         coverage: CoverageReport,
     ) -> bool:
-        if self.task_mode != TaskMode.MULTI_HOP:
+        """Multi-hop only: skip remaining pending states once every required tag is
+        covered by clean, source-linked evidence and an answer state has resolved."""
+        if self.task_mode != TaskMode.MULTI_HOP or not graph.has_pending():
             return False
-        if not coverage.complete or not graph.all_terminal():
+        if any([coverage.missing, coverage.failed_states, coverage.partial_states,
+                coverage.evidence_gaps, coverage.open_questions, coverage.conflicts]):
+            return False
+        if any(state.status.value == "running" for state in graph.states()):
             return False
         states_by_id = {state.state_id: state for state in graph.states()}
-        for result in results:
-            if result.normalized_status() != "resolved":
+        latest = {result.state_id: result for result in results}
+        for result in latest.values():
+            state = states_by_id.get(result.state_id)
+            if not state or state.status.value != "success" or result.conflicts:
                 continue
             candidate = (result.candidate_answer or "").strip()
             if not candidate or candidate.lower() in {"unknown", "n/a", "none", "null"}:
                 continue
-            if self._answer_relevant_conflicts([result], result.conflicts):
-                continue
-            state = states_by_id.get(result.state_id)
-            state_tags = set(state.coverage_tags if state else [])
-            expected_output = (state.expected_output if state else "").lower()
+            expected_output = state.expected_output.lower()
             answer_state = (
-                "final_answer" in state_tags
-                or "answer_format" in state_tags
+                "final_answer" in state.coverage_tags
+                or "answer_format" in state.coverage_tags
                 or "candidate_answer" in expected_output
                 or "final" in expected_output
                 or bool(result.answer_form_hint)
             )
-            if not answer_state:
-                continue
-            if self._max_evidence_confidence(result) < 0.75:
-                continue
-            return True
+            if answer_state and self._max_evidence_confidence(result) >= 0.75:
+                return True
         return False
-
-    def _answer_relevant_conflicts(
-        self,
-        results: list[WorkerResult],
-        conflicts: list[str],
-    ) -> list[str]:
-        return list(dict.fromkeys(conflicts))
-
-    def _resolved_candidate_terms(self, results: list[WorkerResult]) -> list[str]:
-        terms: list[str] = []
-        seen: set[str] = set()
-        for result in results:
-            if result.normalized_status() != "resolved":
-                continue
-            if self._max_evidence_confidence(result) < 0.75:
-                continue
-            raw_terms = [result.candidate_answer, *result.canonical_names]
-            for term in raw_terms:
-                normalized = (term or "").strip()
-                key = normalized.lower()
-                if len(normalized) < 3 or key in {"unknown", "n/a", "none", "null"} or key in seen:
-                    continue
-                terms.append(normalized)
-                seen.add(key)
-        return terms
-
-    @staticmethod
-    def _mentions_term(text: str, term: str) -> bool:
-        lowered = text.lower()
-        needle = term.lower().strip()
-        if not needle:
-            return False
-        if re.search(r"[\u4e00-\u9fff]", needle):
-            return needle in lowered
-        return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", lowered) is not None
 
     @staticmethod
     def _max_evidence_confidence(result: WorkerResult) -> float:
-        if not result.evidence:
-            return 0.0
-        return max(confidence_to_float(evidence.get("confidence")) for evidence in result.evidence)
+        scores = [confidence_to_float(e.get("confidence")) for e in result.evidence if usable_evidence(e)]
+        return max(scores, default=0.0)
 
     async def _replan(
         self,
