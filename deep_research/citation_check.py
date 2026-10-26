@@ -4,10 +4,11 @@ The worker asks the model for evidence items with URLs, but nothing stops the mo
 from inventing a well-formed link. These checks tie every citation back to what the
 tools actually returned in this state:
 
-- provenance: ``tool`` when the URL appeared in a tool result, ``unverified`` otherwise.
+- provenance: ``tool`` when the URL appeared in a tool result, ``prior_state`` when it
+  was verified by an earlier state's tools, ``unverified`` otherwise.
 - support: lexical overlap between the claim and the text observed at that URL
-  (``supported`` / ``weak`` / ``unsupported``). An optional LLM pass upgrades or
-  downgrades ``weak`` items.
+  (``supported`` / ``weak`` / ``unsupported``). An optional LLM pass re-judges items the
+  lexical check did not clear, which is what catches paraphrase and translation.
 
 Unverified items are kept for transparency but downgraded so coverage gates ignore them.
 """
@@ -20,7 +21,9 @@ from urllib.parse import urlsplit, urlunsplit
 from deep_research.llm import extract_json_object
 
 PROVENANCE_TOOL = "tool"
+PROVENANCE_PRIOR = "prior_state"
 PROVENANCE_UNVERIFIED = "unverified"
+VERIFIED_PROVENANCE = {PROVENANCE_TOOL, PROVENANCE_PRIOR}
 SUPPORTED = "supported"
 WEAK = "weak"
 UNSUPPORTED = "unsupported"
@@ -28,6 +31,8 @@ UNSUPPORTED = "unsupported"
 SUPPORT_THRESHOLD = 0.5
 WEAK_THRESHOLD = 0.2
 _URL_RE = re.compile(r"https?://[^\s)>\]\"']+")
+_LATIN_RE = re.compile(r"[a-z0-9]+(?:[.\-'][a-z0-9]+)*")
+_CJK_RE = re.compile(r"[一-鿿]+")
 _STOPWORDS = {
     "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "is", "are", "was", "were",
     "by", "with", "as", "from", "that", "this", "it", "its", "be", "has", "have", "had",
@@ -47,8 +52,14 @@ def normalize_url(url: object) -> str:
     return urlunsplit(("https", host, path, parts.query, ""))
 
 
-def observed_sources(tool_calls: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Map every URL the tools returned to the text fragments seen at that URL."""
+def observed_sources(
+    tool_calls: list[dict[str, Any]],
+    prior_evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, list[str]]:
+    """Map every URL the tools returned to the text fragments seen at that URL.
+
+    Evidence already verified in earlier states counts as observed too, so a worker may
+    re-cite it; its fragments are the verified claims, not the page text."""
     observed: dict[str, list[str]] = {}
 
     def add(url: object, *texts: object) -> None:
@@ -75,26 +86,55 @@ def observed_sources(tool_calls: list[dict[str, Any]]) -> dict[str, list[str]]:
         # Wikipedia and scraped pages report their canonical URL inside the text body.
         for found in _URL_RE.findall(raw):
             add(found, raw)
+    for item in prior_evidence or []:
+        if (isinstance(item, dict) and item.get("provenance") in VERIFIED_PROVENANCE
+                and item.get("support") != UNSUPPORTED):
+            add(item.get("url"), item.get("claim"))
     return observed
 
 
-def _tokens(text: str) -> set[str]:
-    text = str(text or "").lower()
-    words = {w for w in re.findall(r"[a-z0-9]+(?:[.\-'][a-z0-9]+)*", text) if len(w) > 1 and w not in _STOPWORDS}
-    cjk = re.sub(r"[^一-鿿]", " ", text)
-    for run in cjk.split():
+def _latin_tokens(text: str) -> set[str]:
+    return {w for w in _LATIN_RE.findall(text) if len(w) > 1 and w not in _STOPWORDS}
+
+
+def _cjk_tokens(text: str) -> set[str]:
+    words: set[str] = set()
+    for run in _CJK_RE.findall(text):
         words.update(run[i:i + 2] for i in range(len(run) - 1))
     return words
 
 
+def _tokens(text: str) -> set[str]:
+    text = str(text or "").lower()
+    return _latin_tokens(text) | _cjk_tokens(text)
+
+
 def support_score(claim: str, fragments: list[str]) -> float:
-    claim_tokens = _tokens(claim)
-    if not claim_tokens:
+    """Overlap ratio of claim tokens found in the source text.
+
+    A claim written in Chinese about an English page shares no CJK bigrams with it, so a
+    mixed-script claim is also scored on its Latin tokens alone (names, numbers, places)
+    when it has at least three of them; the better ratio wins. That still cannot prove
+    entailment across languages, which is why weak and unsupported tool-backed items go
+    to the model for a second opinion."""
+    claim = str(claim or "").lower()
+    all_tokens = _tokens(claim)
+    if not all_tokens:
         return 0.0
-    source_tokens = set()
+    source_tokens: set[str] = set()
     for fragment in fragments:
         source_tokens |= _tokens(fragment)
-    return len(claim_tokens & source_tokens) / len(claim_tokens)
+    score = len(all_tokens & source_tokens) / len(all_tokens)
+    latin = _latin_tokens(claim)
+    if len(latin) >= 3 and len(latin) < len(all_tokens):
+        score = max(score, len(latin & source_tokens) / len(latin))
+    return score
+
+
+def text_overlap(text: str, other: str) -> float:
+    """Share of `text` tokens that also occur in `other`; used to match questions to planned states."""
+    tokens = _tokens(text)
+    return len(tokens & _tokens(other)) / len(tokens) if tokens else 0.0
 
 
 def support_label(score: float) -> str:
@@ -105,9 +145,14 @@ def support_label(score: float) -> str:
     return UNSUPPORTED
 
 
-def annotate_evidence(evidence: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def annotate_evidence(
+    evidence: list[dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
+    prior_evidence: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Attach provenance/support fields in place and downgrade citations the tools never returned."""
-    observed = observed_sources(tool_calls)
+    tool_only = observed_sources(tool_calls)
+    observed = observed_sources(tool_calls, prior_evidence)
     for item in evidence:
         if not isinstance(item, dict):
             continue
@@ -121,7 +166,7 @@ def annotate_evidence(evidence: list[dict[str, Any]], tool_calls: list[dict[str,
             item["confidence"] = "low"
             continue
         score = support_score(str(item.get("claim") or ""), fragments)
-        item["provenance"] = PROVENANCE_TOOL
+        item["provenance"] = PROVENANCE_TOOL if key in tool_only else PROVENANCE_PRIOR
         item["support"] = support_label(score)
         item["support_score"] = round(score, 3)
     return evidence
@@ -141,7 +186,7 @@ def citation_stats(evidence: list[dict[str, Any]]) -> dict[str, int]:
             continue
         stats["total"] += 1
         provenance = item.get("provenance")
-        if provenance == PROVENANCE_TOOL:
+        if provenance in VERIFIED_PROVENANCE:
             stats["tool"] += 1
         elif provenance == PROVENANCE_UNVERIFIED:
             stats["unverified"] += 1
@@ -155,7 +200,7 @@ def citation_stats(evidence: list[dict[str, Any]]) -> dict[str, int]:
 
 ENTAILMENT_SYSTEM = (
     "你是引用核验员。给定来源原文片段和一条引用陈述，判断原文是否支持该陈述。"
-    "只依据片段内容，不使用外部知识；片段不足以判断时回答 unclear。"
+    "陈述和原文可能是不同语言，按语义判断。只依据片段内容，不使用外部知识；片段不足以判断时回答 unclear。"
     '输出严格 JSON：{"verdicts":[{"index":0,"verdict":"supported|unsupported|unclear","reason":"..."}]}'
 )
 
@@ -164,14 +209,21 @@ async def llm_entailment(
     llm: Any,
     evidence: list[dict[str, Any]],
     tool_calls: list[dict[str, Any]],
+    prior_evidence: list[dict[str, Any]] | None = None,
     *,
     max_items: int = 8,
     max_chars: int = 1500,
 ) -> list[dict[str, Any]]:
-    """Re-judge lexically weak but tool-backed citations with the model. Failures leave items unchanged."""
-    observed = observed_sources(tool_calls)
+    """Re-judge tool-backed citations the lexical check did not clear. Failures leave items unchanged.
+
+    Lexical overlap misses paraphrase and translation, so both weak and unsupported items are
+    sent; unverified (fabricated URL) items are never rescued this way. An "unclear" verdict
+    on an unsupported item lifts it to weak: the model could not confirm it, but the lexical
+    rejection is no longer trusted either."""
+    observed = observed_sources(tool_calls, prior_evidence)
     pending = [item for item in evidence if isinstance(item, dict)
-               and item.get("provenance") == PROVENANCE_TOOL and item.get("support") == WEAK][:max_items]
+               and item.get("provenance") in VERIFIED_PROVENANCE
+               and item.get("support") in {WEAK, UNSUPPORTED}][:max_items]
     if not pending or llm is None:
         return evidence
     blocks = []
@@ -196,8 +248,12 @@ async def llm_entailment(
             label = str(verdict.get("verdict") or "").lower()
             if label in {SUPPORTED, UNSUPPORTED}:
                 item["support"] = label
-                item["support_judge"] = "llm"
-                item["support_reason"] = str(verdict.get("reason") or "")[:300]
+            elif item["support"] == UNSUPPORTED:
+                item["support"] = WEAK
+            else:
+                continue
+            item["support_judge"] = "llm"
+            item["support_reason"] = str(verdict.get("reason") or "")[:300]
     except Exception:
         pass
     return evidence

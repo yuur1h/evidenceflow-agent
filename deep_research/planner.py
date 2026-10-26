@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from deep_research.llm import LLMClient, extract_json_object
@@ -117,11 +118,28 @@ class DeepResearchPlanner:
             research_intent=str(data.get("research_intent", query)),
             scope=dict(data.get("scope", {})),
             success_criteria=list(data.get("success_criteria", [])),
-            coverage_checklist=list(data.get("coverage_checklist", [])) or self._infer_coverage(query),
+            coverage_checklist=self._normalize_checklist(data.get("coverage_checklist", []), states) or self._infer_coverage(query),
             risk_flags=list(data.get("risk_flags", [])),
             states=states,
             raw_plan=data,
         )
+
+    @staticmethod
+    def _normalize_checklist(items: Any, states: list[ResearchState]) -> list[str]:
+        """Reduce "tag: description" checklist entries to the tag the states actually carry.
+
+        Models like to write the checklist as "answer: give the county name" while tagging
+        states with plain "answer"; the two never matched, so coverage stayed incomplete
+        until a replan created states tagged with the full sentence."""
+        known = {tag for state in states for tag in state.coverage_tags}
+        normalized = []
+        for item in items if isinstance(items, list) else []:
+            text = str(item).strip()
+            if not text:
+                continue
+            head = re.split(r"[:：]", text, maxsplit=1)[0].strip()
+            normalized.append(head if head and head != text and head in known else text)
+        return list(dict.fromkeys(normalized))
 
     def _parse_states(self, states_raw: Any, prefix: str) -> list[ResearchState]:
         if not isinstance(states_raw, list):

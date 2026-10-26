@@ -133,3 +133,73 @@ def test_fallback_replan_verifies_every_conflict(mode):
     states = planner._fallback_replan_states('x', [], conflicts, [], [{'status': 'resolved', 'candidate_answer': 'Paris'}])
     verify = [s for s in states if s.state_type.value == 'verify']
     assert [s.search_queries[0] for s in verify] == conflicts
+
+
+# ---- open questions that belong to another planned state must not block this one ----
+
+def chain_plan():
+    return ResearchPlan('x', 'x', coverage_checklist=['answer'], states=[
+        ResearchState('s1', 'search', '确认《傲慢与偏见》的作者身份。', coverage_tags=['author']),
+        ResearchState('s2', 'search', '检索 Jane Austen 的出生地及其所在的英格兰郡。', dependencies=['s1'], coverage_tags=['answer'])])
+
+
+@pytest.mark.asyncio
+async def test_question_planned_for_another_state_is_deferred_not_blocking():
+    attempts = []
+
+    async def work(**kwargs):
+        sid = kwargs['state'].state_id
+        attempts.append(sid)
+        if sid == 's1':
+            return WorkerResult(state_id=sid, status='resolved', evidence=[evidence()], candidate_answer='Jane Austen',
+                                open_questions=['简·奥斯汀出生于哪个英格兰郡？'])
+        return WorkerResult(state_id=sid, status='resolved', evidence=[evidence()], candidate_answer='Hampshire')
+
+    r = offline_runner(chain_plan(), work)
+    output = await r.run('x')
+    assert attempts == ['s1', 's2']
+    assert output.metadata['coverage_complete']
+
+
+@pytest.mark.asyncio
+async def test_question_inside_own_scope_still_blocks():
+    attempts = []
+
+    async def work(**kwargs):
+        sid = kwargs['state'].state_id
+        attempts.append(sid)
+        return WorkerResult(state_id=sid, status='resolved', evidence=[evidence()], candidate_answer='Jane Austen',
+                            open_questions=['是否存在同名的另一位作者？'])
+
+    r = offline_runner(chain_plan(), work)
+    output = await r.run('x')
+    assert 's2' not in attempts
+    assert output.metadata['research_status'] == 'partial'
+
+
+# ---- a clean verify state closes the memory conflict it was planned for ----
+
+@pytest.mark.asyncio
+async def test_verified_conflict_is_dismissed_in_memory():
+    dismissed = []
+    plan = ResearchPlan('x', 'x', coverage_checklist=['answer'], states=[
+        ResearchState('a', 'search', 'answer', coverage_tags=['answer']),
+        ResearchState('vc', 'verify', '核查矛盾事实：A <-> B', coverage_tags=['verification'], backtrack_reason='conflict: A <-> B')])
+
+    async def work(**kwargs):
+        return WorkerResult(state_id=kwargs['state'].state_id, status='resolved', evidence=[evidence()], candidate_answer='Paris')
+
+    r = offline_runner(plan, work)
+    r.memory_store.dismiss_conflicts_matching = lambda text: dismissed.append(text) or 1
+    await r.run('x')
+    assert len(dismissed) == 1 and 'A <-> B' in dismissed[0]
+
+
+# ---- "tag: description" checklist entries must match plain state tags ----
+
+def test_checklist_sentences_are_reduced_to_known_tags():
+    planner = DeepResearchPlanner(None)
+    plan = planner._parse_plan('x', {
+        'states': [{'state_id': 's', 'state_type': 'search', 'description': 'd', 'coverage_tags': ['answer']}],
+        'coverage_checklist': ['answer: 给出作者出生地所属的英格兰郡名。', 'verification: 提供可核验的证据', 'official sources']})
+    assert plan.coverage_checklist == ['answer', 'verification', 'official sources']

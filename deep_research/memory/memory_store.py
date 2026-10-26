@@ -32,18 +32,25 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
+def _mentions(text: str, words: set[str]) -> bool:
+    """Latin cue words match whole words only ("no" must not fire on "North"); CJK cues match as substrings."""
+    for word in words:
+        if word.isascii():
+            if re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text):
+                return True
+        elif word in text:
+            return True
+    return False
+
+
 def semantically_opposite(claim_a: str, claim_b: str) -> bool:
     a = claim_a.lower()
     b = claim_b.lower()
-    a_neg = any(word in a for word in NEGATION_WORDS)
-    b_neg = any(word in b for word in NEGATION_WORDS)
-    if a_neg != b_neg:
+    if _mentions(a, NEGATION_WORDS) != _mentions(b, NEGATION_WORDS):
         return True
     for left, right in ANTONYM_PAIRS:
-        a_left = any(word in a for word in left)
-        a_right = any(word in a for word in right)
-        b_left = any(word in b for word in left)
-        b_right = any(word in b for word in right)
+        a_left, a_right = _mentions(a, left), _mentions(a, right)
+        b_left, b_right = _mentions(b, left), _mentions(b, right)
         if (a_left and b_right) or (a_right and b_left):
             return True
     return False
@@ -149,6 +156,15 @@ class SharedMemoryStore:
 
     def get_conflicts(self, status: str | None = None) -> list[ConflictRecord]:
         return self.lt.get_conflicts(status)
+
+    def dismiss_conflicts_matching(self, text: str) -> int:
+        """Close open conflicts whose claim pair appears in `text` (a verify state's reason). Returns the count."""
+        closed = 0
+        for record in self.lt.get_conflicts("open"):
+            if record.claim_1 in text and record.claim_2 in text:
+                self.lt.update_conflict_resolution(record.conflict_id, "dismissed", "verified: no contradiction")
+                closed += 1
+        return closed
 
     def resolve_conflict(
         self,

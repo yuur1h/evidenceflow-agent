@@ -13,7 +13,7 @@ from deep_research.adversarial.red_agent import RedAgent
 from deep_research.compressor.compressor import ContextCompressor
 from deep_research.llm import create_llm, LLMClient
 from deep_research.task_modes import TaskMode
-from deep_research.citation_check import citation_stats
+from deep_research.citation_check import citation_stats, text_overlap
 from deep_research.evidence_quality import usable_evidence, in_time_scope
 from deep_research.memory.long_term import MemoryEntry
 from deep_research.memory.memory_store import SharedMemoryStore
@@ -282,6 +282,7 @@ class DeepResearchRunner:
                 )
                 self.num_searches += len(result.tool_calls)
                 result.state_id = state.state_id
+                self._defer_planned_questions(result, state, graph)
                 if result.normalized_status() == "failed":
                     graph.mark_failed(state.state_id, result.error or result.summary)
                 elif result.normalized_status() != "resolved" or not any(usable_evidence(e) for e in result.evidence) or result.open_questions or result.conflicts:
@@ -289,6 +290,7 @@ class DeepResearchRunner:
                     graph.mark_partial(state.state_id, "Unresolved questions, conflicts, or missing source-linked evidence")
                 else:
                     graph.mark_success(state.state_id)
+                    self._close_verified_memory_conflicts(state)
                 self._emit(
                     {
                         "type": "state_result",
@@ -336,6 +338,37 @@ class DeepResearchRunner:
                 return result
 
         return await asyncio.gather(*(run_one(state) for state in ready))
+
+    PLANNED_QUESTION_OVERLAP = 0.35
+
+    def _close_verified_memory_conflicts(self, state: ResearchState) -> None:
+        """A verify state that resolved cleanly settles the memory conflict it was created for.
+
+        Memory conflicts are detected heuristically at insert time and nothing else closes
+        them, so without this an entry pair flagged once would block coverage forever."""
+        if state.state_type.value != "verify" or not state.backtrack_reason:
+            return
+        dismiss = getattr(self.memory_store, "dismiss_conflicts_matching", None)
+        if callable(dismiss):
+            dismiss(f"{state.backtrack_reason}\n{state.description}")
+
+    @classmethod
+    def _defer_planned_questions(cls, result: WorkerResult, state: ResearchState, graph: ResearchStateGraph) -> None:
+        """Move open questions that restate another planned state's job into recommended_followups.
+
+        Workers tend to list the rest of the overall query as their own open question, which
+        would mark a finished node partial and block every dependent. A question that is
+        already another node's description is that node's problem, not this one's."""
+        others = [s.description for s in graph.states() if s.state_id != state.state_id and s.description]
+        kept, deferred = [], []
+        for question in result.open_questions:
+            if any(text_overlap(question, desc) >= cls.PLANNED_QUESTION_OVERLAP for desc in others):
+                deferred.append(question)
+            else:
+                kept.append(question)
+        if deferred:
+            result.open_questions = kept
+            result.recommended_followups = list(dict.fromkeys([*result.recommended_followups, *deferred]))
 
     def _collect_to_memory(self, query: str, results: list[WorkerResult]) -> None:
         for result in results:
@@ -450,6 +483,7 @@ class DeepResearchRunner:
             expected_output = state.expected_output.lower()
             answer_state = (
                 "final_answer" in state.coverage_tags
+                or "answer" in state.coverage_tags
                 or "answer_format" in state.coverage_tags
                 or "candidate_answer" in expected_output
                 or "final" in expected_output

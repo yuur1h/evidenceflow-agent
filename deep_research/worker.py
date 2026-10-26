@@ -76,7 +76,7 @@ class DeepResearchWorker:
                 result.tool_calls = tool_calls
                 if not result.evidence:
                     result.evidence = self._evidence_from_tools(state, tool_calls)
-                await self._check_citations(result.evidence, tool_calls)
+                await self._check_citations(result.evidence, tool_calls, prior_results or [])
                 return result
         except Exception as exc:
             return WorkerResult(
@@ -104,11 +104,17 @@ class DeepResearchWorker:
             tool_calls=tool_calls,
         )
 
-    async def _check_citations(self, evidence: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> None:
+    async def _check_citations(
+        self,
+        evidence: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
+        prior_results: list[dict[str, Any]],
+    ) -> None:
         """Tie model-written citations back to tool output; unverified ones are downgraded, not deleted."""
-        annotate_evidence(evidence, tool_calls)
+        prior_evidence = [e for r in prior_results for e in (r.get("evidence") or []) if isinstance(e, dict)]
+        annotate_evidence(evidence, tool_calls, prior_evidence)
         if os.getenv("CITATION_LLM_CHECK", "1").strip().lower() not in {"0", "false", "no", ""}:
-            await llm_entailment(self.llm, evidence, tool_calls)
+            await llm_entailment(self.llm, evidence, tool_calls, prior_evidence)
 
     async def _search(self, query: str, *, state_id: str) -> dict[str, Any]:
         if hasattr(self.tool_executor, "search"):
@@ -249,10 +255,10 @@ class DeepResearchWorker:
 
 请输出严格 JSON：
 {{
-  "status": "resolved|partial|failed",
+  "status": "resolved|partial|failed：以本节点 description 为准，本节点的问题已有有来源的答案即为 resolved，不要求整个原始问题已解决",
   "state_id": "{state.state_id}",
   "summary": "...",
-  "candidate_answer": "当前节点的候选答案或结论；不能判定时为空字符串",
+  "candidate_answer": "本节点得出的结论（实体名、数值、判断等）；只有确实无法判定时才为空字符串",
   "key_findings": ["..."],
   "evidence": [
     {{
@@ -264,9 +270,9 @@ class DeepResearchWorker:
       "evidence_type": "primary|secondary|inference"
     }}
   ],
-  "conflicts": ["..."],
-  "open_questions": ["..."],
-  "recommended_followups": ["..."],
+  "conflicts": ["来源之间关于本节点问题的矛盾"],
+  "open_questions": ["仅限本节点 description 范围内仍未解决的问题；原始问题的其他部分或其他节点要做的事不写在这里"],
+  "recommended_followups": ["建议后续节点处理的问题，例如原始问题剩余的部分"],
   "canonical_names": ["候选对象的标准名、英文名、别名等"],
 	  "answer_form_hint": "多跳问答的答案格式；事实核查和专题研究留空"
 	}}"""
