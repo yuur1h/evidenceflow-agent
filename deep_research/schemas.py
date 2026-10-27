@@ -160,6 +160,25 @@ class WorkerResult:
         data["status"] = self.normalized_status()
         return data
 
+    EVIDENCE_FIELDS = ("claim", "source", "url", "date", "confidence", "evidence_type", "provenance", "support")
+
+    def compact_dict(self, *, max_evidence: int = 8, max_items: int = 6) -> dict[str, Any]:
+        """What other stages need to know about this result, without the raw tool output.
+
+        to_dict() carries every tool call's full text; feeding that to the replanner or to
+        later workers made single prompts of several hundred thousand tokens."""
+        data = self.to_dict()
+        data.pop("tool_calls", None)
+        data["evidence"] = [
+            {key: item.get(key, "") for key in self.EVIDENCE_FIELDS}
+            for item in self.evidence if isinstance(item, dict)
+        ][:max_evidence]
+        for key in ("key_findings", "conflicts", "open_questions", "recommended_followups", "canonical_names"):
+            data[key] = [str(x)[:300] for x in data.get(key, [])][:max_items]
+        data["summary"] = str(data.get("summary", ""))[:600]
+        data["num_tool_calls"] = len(self.tool_calls)
+        return data
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WorkerResult":
         return cls(

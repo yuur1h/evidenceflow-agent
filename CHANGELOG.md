@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `LLM_PROVIDER=deepseek` using DeepSeek's OpenAI-compatible endpoint (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, optional `DEEPSEEK_BASE_URL`). Qwen thinking flags are not forwarded to it.
+
+### Fixed (from the first live run)
+- Worker open_questions are scoped to the node; questions that restate another planned state are deferred to followups instead of marking the node partial.
+- Memory conflict cues match whole words ("no" no longer fires on "North"); a clean verify state dismisses the memory conflict it was planned for.
+- Citations re-cited from earlier states are verified (`provenance=prior_state`); mixed-script claims score on Latin tokens; unsupported tool-backed items are re-judged by the model.
+- Planner checklist entries like "answer: ..." are reduced to the tag the states carry.
+- Replanner and later workers receive `WorkerResult.compact_dict()` instead of full results; raw tool output in those prompts had produced single calls of up to 630k tokens.
+
+### Validation
+- DeepSeek `deepseek-chat` + Serper, 3 multi-hop items (mh-01..03): 0/3 correct before these fixes, 3/3 correct and `complete` after; mean tokens 85.9k -> 41.8k, mean elapsed 55.6s -> 33.4s, supported citations 4/67 -> 43/47.
+- Full 25-item benchmark (same setup): multi_hop 9/12, fact_check 8/8, research 4/5 (rubric mean 0.80); overall 21/25, 7.0M tokens before the compact-payload fix. Only 10/25 reached `complete`: fact_check and research cannot close coverage under the step-2 gates (absence-of-counter-evidence and synthesis nodes stay partial) and each burns both replans. Details in `evaluation/benchmark/RESULTS.md`.
+
 ## 0.3.0 — 2026-10-27
 
 ### Added

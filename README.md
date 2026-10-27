@@ -37,7 +37,7 @@ cp .env.template .env
 ./start-local.sh          # Windows 用 .\start-local.ps1
 ```
 
-没有 uv 时可用 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`。离线检查：`./dev.sh test`。模型支持 OpenAI（默认模板）或 DashScope。设置 `LLM_PROVIDER` 并填写对应密钥，详见 [OpenAI 配置](docs/openai-setup.md)。联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
+没有 uv 时可用 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`。离线检查：`./dev.sh test`。模型支持 OpenAI（默认模板）、DashScope 或 DeepSeek。设置 `LLM_PROVIDER` 并填写对应密钥，详见 [OpenAI 配置](docs/openai-setup.md)；DeepSeek 只需 `LLM_PROVIDER="deepseek"` 和 `DEEPSEEK_API_KEY`，默认模型 `deepseek-chat`。联网检索按所选工具配置服务；缺少工具配置会影响能力。不要提交 `.env` 或密钥。
 
 - 研究界面：`http://127.0.0.1:8000/visualize`
 - API 文档：`http://127.0.0.1:8000/docs`
@@ -75,11 +75,12 @@ Qwen 配置见 [Qwen 接入说明](docs/qwen-setup.md)。配置、请求样例�
 
 ### 本地优化第三步：引用溯源核验与评测集
 
-每条引用的 URL 必须出现在该节点的工具输出中，陈述与来源文本做重叠核验，弱支持条目由模型复判；未核验或不被支持的引用降级并不计入覆盖。同时修复了多跳提前停止不可达、兜底重规划丢弃冲突、记忆 ID 不稳定等问题，并加入 25 题评测集与 `evaluation/run_benchmark.py`。详见 [第三步记录](docs/optimization-step-3.md)。评测集尚未用真实模型运行。
+每条引用的 URL 必须出现在该节点的工具输出中，陈述与来源文本做重叠核验，弱支持条目由模型复判；未核验或不被支持的引用降级并不计入覆盖。同时修复了多跳提前停止不可达、兜底重规划丢弃冲突、记忆 ID 不稳定等问题，并加入 25 题评测集与 `evaluation/run_benchmark.py`。详见 [第三步记录](docs/optimization-step-3.md)。首次真实运行（DeepSeek + Serper）结果与发现见 [评测结果](evaluation/benchmark/RESULTS.md)。
 
 以下为待办，不是已完成能力：
 
-- [ ] 用真实模型与搜索服务跑通评测集，记录准确率、耗时与 Token 成本
+- [x] 用真实模型与搜索服务跑通评测集，记录准确率、耗时与 Token 成本（见评测结果）
+- [ ] 报告类模式的覆盖规则：反证缺席与综合类节点不应永久 partial；重规划无新证据时提前止损
 - [ ] 置信度校准：用评测结果校正 `confidence` 与正确率的关系
 - [ ] 引用核验从词元重叠升级为蕴含判断，并评测复判准确性
 - [ ] 增加检索缓存，比较不同并发与重规划配置

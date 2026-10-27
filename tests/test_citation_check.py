@@ -134,3 +134,53 @@ async def test_worker_output_is_annotated_end_to_end(monkeypatch):
     result = await worker.run(query="capital of france", state=ResearchState("s", "search", "x"))
     assert [e["provenance"] for e in result.evidence] == ["tool", "unverified"]
     assert [usable_evidence(e) for e in result.evidence] == [True, False]
+
+
+# ---- live-run fixes: cross-lingual claims, prior-state citations, re-judging unsupported ----
+
+def test_mixed_script_claim_scores_on_latin_entities():
+    claim = "《傲慢与偏见》是英国作家 Jane Austen 的小说，1813 年出版。"
+    assert support_score(claim, ["Pride and Prejudice is an 1813 novel by Jane Austen"]) >= 0.5
+    assert support_score(claim, ["Berlin hosted the 1936 Olympics"]) < 0.2
+
+
+def test_pure_chinese_claim_on_english_page_stays_unsupported_lexically():
+    # Only the model pass can rescue this; the lexical layer must not guess.
+    [item_] = annotate_evidence([item("https://en.wikipedia.org/wiki/Paris", claim="巴黎是法国的首都。")], [SEARCH])
+    assert item_["support"] == "unsupported" and item_["provenance"] == "tool"
+
+
+def test_prior_state_citation_is_verified_not_fabricated():
+    prior = [{"claim": "Paris is the capital of France.", "url": "https://en.wikipedia.org/wiki/Paris",
+              "provenance": "tool", "support": "supported"}]
+    [ok] = annotate_evidence([item("https://en.wikipedia.org/wiki/Paris")], [PAGE], prior)
+    assert ok["provenance"] == "prior_state" and ok["support"] == "supported"
+    assert usable_evidence(ok)
+    assert citation_stats([ok])["tool"] == 1
+
+
+def test_prior_unverified_or_unsupported_items_do_not_launder_urls():
+    for bad in ({"provenance": "unverified", "support": "unsupported"}, {"provenance": "tool", "support": "unsupported"}):
+        prior = [{"claim": "x", "url": "https://en.wikipedia.org/wiki/Paris", **bad}]
+        [it] = annotate_evidence([item("https://en.wikipedia.org/wiki/Paris")], [PAGE], prior)
+        assert it["provenance"] == "unverified"
+
+
+@pytest.mark.parametrize('verdict,expected', [("supported", "supported"), ("unsupported", "unsupported"), ("unclear", "weak")])
+@pytest.mark.asyncio
+async def test_llm_rejudges_unsupported_tool_backed_items(verdict, expected):
+    zh = item("https://en.wikipedia.org/wiki/Paris", claim="巴黎是法国的首都。")
+    annotate_evidence([zh], [SEARCH])
+    assert zh["support"] == "unsupported"
+    llm = VerdictLLM(verdict)
+    await llm_entailment(llm, [zh], [SEARCH])
+    assert llm.calls == 1 and zh["support"] == expected
+
+
+@pytest.mark.asyncio
+async def test_llm_never_rescues_fabricated_urls():
+    fake = item("https://made.up/x")
+    annotate_evidence([fake], [SEARCH])
+    llm = VerdictLLM("supported")
+    await llm_entailment(llm, [fake], [SEARCH])
+    assert llm.calls == 0 and fake["provenance"] == "unverified" and not usable_evidence(fake)

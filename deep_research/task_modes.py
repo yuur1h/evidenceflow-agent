@@ -43,7 +43,7 @@ def stage_prompt(stage: str, mode: TaskMode | str) -> str:
     if stage == "replanner":
         return common + '你负责针对覆盖缺口、失败和未解决冲突追加研究节点，保留可用证据。输出严格 JSON：{"states": [...]}，沿用原 state 字段。不得因已有一个候选答案就忽略其他必需维度。'
     if stage == "worker":
-        return common + "只完成当前节点，输出用户模板规定的严格 JSON。证据不足返回 partial；保留来源、日期和冲突。证据必须带原始 URL，日期使用 YYYY-MM-DD，无法确认时留空，不得编造。candidate_answer 可为当前结论，无法判定可为空，不必是实体名称。"
+        return common + "只完成当前节点，输出用户模板规定的严格 JSON。节点的 status 和 open_questions 只针对当前节点的 description：本节点问题有有来源的答案就是 resolved，原始问题尚未解决的其他部分写入 recommended_followups 而不是 open_questions。证据不足返回 partial；保留来源、日期和冲突。证据必须带原始 URL，日期使用 YYYY-MM-DD，无法确认时留空，不得编造。candidate_answer 可为当前结论，无法判定可为空，不必是实体名称。"
     if stage == "synthesizer":
         return common + "整合研究证据，直接回答用户问题。不输出内部推理过程。" + output_contract(mode)
     if stage == "review":

@@ -4,7 +4,16 @@
 
 来源：yuur1h/evidenceflow-agent 的 Git 克隆。macOS 15（Apple Silicon），系统 Python 3.9 不满足要求，使用 uv 0.13 安装 Python 3.12 并按 `uv.lock` 建立 `.venv`（`./dev.sh setup`）。
 
-已验证：`./dev.sh test` 通过（92 个测试 + smoke 检查）；`/visualize`、`/docs`、`/openapi.json` 返回 200；缺少密钥时 `/stream` 返回 Error 事件并结束。未配置任何模型或搜索密钥，没有联网运行；评测集未执行。
+已验证：`./dev.sh test` 通过；`/visualize`、`/docs`、`/openapi.json` 返回 200；缺少密钥时 `/stream` 返回 Error 事件并结束。
+
+联网（DeepSeek `deepseek-chat` + Serper，无 Jina）：`evaluation/run_benchmark.py --modes multi_hop --limit 3 --max-adversarial-rounds 0`。
+
+| 运行 | 正确 | complete | 平均耗时 | 平均 token | 引用 supported/total |
+| --- | --- | --- | --- | --- | --- |
+| 0.3.0 原始 | 0/3 | 0/3 | 55.6s | 85,950 | 4/67 |
+| 修复后（见 CHANGELOG Unreleased） | 3/3 | 3/3 | 33.4s | 41,842 | 43/47 |
+
+0/3 的原因由事件记录定位：首跳节点把整题剩余部分写成自己的 open question 导致依赖永远阻塞；记忆冲突检测把 "North" 里的 "no" 当否定词并且冲突从不关闭；引用核验拒绝跨节点引用且无法给中文陈述对英文页面打分；planner 清单 "answer: …" 与标签 "answer" 不匹配。完整 25 题评测集结果见 [evaluation/benchmark/RESULTS.md](evaluation/benchmark/RESULTS.md)：总体 21/25，多跳 9/12，事实核查 8/8，专题研究 4/5；仅 10/25 达到 complete，报告类模式在现有证据门槛下结构性无法完成，是下一步要改的地方。
 
 ---
 

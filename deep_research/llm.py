@@ -44,13 +44,7 @@ class DashScopeLLM:
         started = time.monotonic()
         model = kwargs.pop("model", self.model)
         temperature = kwargs.pop("temperature", 0.1)
-        thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower()
-        if thinking:
-            if thinking not in {"true", "false"}:
-                raise ValueError("QWEN_ENABLE_THINKING must be true or false")
-            extra_body = dict(kwargs.get("extra_body") or {})
-            extra_body.setdefault("enable_thinking", thinking == "true")
-            kwargs["extra_body"] = extra_body
+        self._apply_thinking_setting(kwargs)
         response = await self.client.chat.completions.create(
             model=model,
             messages=messages,
@@ -70,6 +64,16 @@ class DashScopeLLM:
             elapsed_seconds=round(time.monotonic() - started, 3),
         )
         return content
+
+    @staticmethod
+    def _apply_thinking_setting(kwargs: dict[str, Any]) -> None:
+        thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower()
+        if thinking:
+            if thinking not in {"true", "false"}:
+                raise ValueError("QWEN_ENABLE_THINKING must be true or false")
+            extra_body = dict(kwargs.get("extra_body") or {})
+            extra_body.setdefault("enable_thinking", thinking == "true")
+            kwargs["extra_body"] = extra_body
 
     def get_usage(self) -> dict[str, Any]:
         return dict(self._usage_totals)
@@ -163,9 +167,26 @@ class OpenAILLM(DashScopeLLM):
         return content
 
 
+class DeepSeekLLM(DashScopeLLM):
+    """DeepSeek's OpenAI-compatible Chat Completions endpoint. Qwen thinking flags are not forwarded."""
+
+    def __init__(self, *, api_key: str | None = None, model: str | None = None) -> None:
+        key = (api_key or os.getenv("DEEPSEEK_API_KEY", "")).strip()
+        if not key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set")
+        super().__init__(api_key=key, model=model or os.getenv("DEEPSEEK_MODEL", "").strip() or "deepseek-chat",
+                         base_url=os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com/v1")
+
+    @staticmethod
+    def _apply_thinking_setting(kwargs: dict[str, Any]) -> None:
+        return None
+
+
+PROVIDER_CLASSES = {"openai": OpenAILLM, "dashscope": DashScopeLLM, "deepseek": DeepSeekLLM}
+
+
 def create_llm(*, model: str | None = None) -> DashScopeLLM:
-    cls = OpenAILLM if selected_provider() == "openai" else DashScopeLLM
-    return cls(model=model)
+    return PROVIDER_CLASSES[selected_provider()](model=model)
 
 
 def strip_markdown_fence(text: str) -> str:
