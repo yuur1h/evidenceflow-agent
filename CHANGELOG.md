@@ -12,7 +12,8 @@
 - Planner checklist entries like "answer: ..." are reduced to the tag the states carry.
 
 ### Validation
-- DeepSeek `deepseek-chat` + Serper, 3 multi-hop items (mh-01..03): 0/3 correct before these fixes, 3/3 correct and `complete` after; mean tokens 85.9k -> 41.8k, mean elapsed 55.6s -> 33.4s, supported citations 4/67 -> 43/47. Full benchmark not yet run.
+- DeepSeek `deepseek-chat` + Serper, 3 multi-hop items (mh-01..03): 0/3 correct before these fixes, 3/3 correct and `complete` after; mean tokens 85.9k -> 41.8k, mean elapsed 55.6s -> 33.4s, supported citations 4/67 -> 43/47.
+- Full 25-item benchmark (same setup): multi_hop 9/12, fact_check 8/8, research 3/5 scored (rubric 0.87 mean); overall 20/25, 3.99M tokens. Only 10/25 reached `complete`: fact_check and research cannot close coverage under the step-2 gates (absence-of-counter-evidence and synthesis nodes stay partial) and each burns both replans. Two research items failed on account balance. Details in `evaluation/benchmark/RESULTS.md`.
 
 ## 0.3.0 — 2026-10-27
 
