@@ -10,10 +10,12 @@ Code: branch `feat/deepseek-provider` at the "docs: record first live DeepSeek t
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | multi_hop | 12 | 9/12 (75%) | 9/12 | 51 s | 79k | 45k | 324/334 |
 | fact_check | 8 | 8/8 (100%) | 1/8 | 158 s | 308k | 234k | 817/850 |
-| research | 5 | 3/5 scored, rubric mean 0.87 of those | 0/5 | 83 s | 193k | 169k | 136/149 |
-| **overall** | 25 | 20/25 | 10/25 | 92 s | 173k | — | 1277/1333 |
+| research | 5 | 4/5 (rubric mean 0.80) | 0/5 | 144 s | 719k* | 257k | 207/220 |
+| **overall** | 25 | 21/25 (84%) | 10/25 | 104 s | 280k | — | 1348/1404 |
 
-Total: 3.99M tokens, 2,293 s summed item time. Two research items (rs-03, rs-05) failed with `402 Insufficient Balance` when the account ran out; they are counted as incorrect above and have no cost figures.
+Total: 7.0M tokens, 2,597 s summed item time. rs-03 and rs-05 first failed with `402 Insufficient Balance` and were re-run after a top-up (they are the only rows from a second process).
+
+\* rs-03 and rs-05 cost 1.32M and 1.69M tokens — 5× any other item. The runtime log showed single replanner calls with 240k–630k prompt tokens: `_replan` was passing every resolved state's full `tool_calls` (raw search/scrape text) to the model. Fixed in the next commit (`WorkerResult.compact_dict()`); the three earlier research items (169k–257k) were already affected to a smaller degree, so research-mode cost figures above are an upper bound.
 
 ### multi_hop
 
@@ -25,10 +27,10 @@ Every verdict was right, but 7/8 runs never reached `complete`, burned both repl
 
 ### research
 
-Rubric coverage was 4/5, 5/5, 4/5 on the three items that ran; the missed points were the sodium-ion low-temperature advantage (rs-01) and the WHO 2021 guideline value (rs-04). All ran to `partial` for the same structural reason as fact_check: `synthesis` and `limitations` nodes have no URL-backed evidence.
+Rubric coverage was 4/5, 5/5, 5/5, 4/5, 2/5. Missed points: the sodium-ion low-temperature advantage (rs-01), the WHO 2021 guideline value (rs-04), and for the Transformer-vs-RNN item (rs-05) the quadratic attention cost, positional encoding and data/compute demands — the report stayed at advantages and never reached limitations. All five ran to `partial` for the same structural reason as fact_check: `synthesis` and `limitations` nodes have no URL-backed evidence.
 
 ### What this run changes next
 
 1. Let a `counter_evidence` / `supporting_evidence` node resolve as "searched, none found" with its queries recorded, instead of `partial`, and let `verdict` / `synthesis` / `limitations` nodes be covered by the evidence of the nodes they depend on. Needs a live re-run to confirm cost drops.
 2. Cap replans when a replan adds no new usable evidence; fc-05 ran 288 searches for a claim settled in the first round.
-3. Re-run rs-03 and rs-05 once the account has balance.
+3. Re-run the research items after the compact-payload fix to get real cost numbers for that mode.

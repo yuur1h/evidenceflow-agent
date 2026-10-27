@@ -13,7 +13,7 @@
 | 0.3.0 原始 | 0/3 | 0/3 | 55.6s | 85,950 | 4/67 |
 | 修复后（见 CHANGELOG Unreleased） | 3/3 | 3/3 | 33.4s | 41,842 | 43/47 |
 
-0/3 的原因由事件记录定位：首跳节点把整题剩余部分写成自己的 open question 导致依赖永远阻塞；记忆冲突检测把 "North" 里的 "no" 当否定词并且冲突从不关闭；引用核验拒绝跨节点引用且无法给中文陈述对英文页面打分；planner 清单 "answer: …" 与标签 "answer" 不匹配。完整 25 题评测集结果见 [evaluation/benchmark/RESULTS.md](evaluation/benchmark/RESULTS.md)：总体 20/25，多跳 9/12，事实核查 8/8，专题研究 3/5（两题因账户余额耗尽失败）；仅 10/25 达到 complete，报告类模式在现有证据门槛下结构性无法完成，是下一步要改的地方。
+0/3 的原因由事件记录定位：首跳节点把整题剩余部分写成自己的 open question 导致依赖永远阻塞；记忆冲突检测把 "North" 里的 "no" 当否定词并且冲突从不关闭；引用核验拒绝跨节点引用且无法给中文陈述对英文页面打分；planner 清单 "answer: …" 与标签 "answer" 不匹配。完整 25 题评测集结果见 [evaluation/benchmark/RESULTS.md](evaluation/benchmark/RESULTS.md)：总体 21/25，多跳 9/12，事实核查 8/8，专题研究 4/5；仅 10/25 达到 complete，报告类模式在现有证据门槛下结构性无法完成，是下一步要改的地方。
 
 ---
 
