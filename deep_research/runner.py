@@ -276,7 +276,7 @@ class DeepResearchRunner:
                         query=query,
                         state=state,
                         memory_context=memory_context,
-                        prior_results=[item.to_dict() for item in previous_results],
+                        prior_results=[item.compact_dict() for item in previous_results],
                     ),
                     timeout=state.timeout_seconds or self.state_timeout_seconds,
                 )
@@ -507,7 +507,7 @@ class DeepResearchRunner:
         coverage: CoverageReport,
     ) -> None:
         latest = {result.state_id: result for result in results}
-        successful = [result.to_dict() for result in latest.values() if result.normalized_status() == "resolved"]
+        successful = [result.compact_dict() for result in latest.values() if result.normalized_status() == "resolved"]
         failed_states = []
         for state in graph.states():
             if state.status.value not in {"failed", "partial", "pending"}:

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -203,3 +204,42 @@ def test_checklist_sentences_are_reduced_to_known_tags():
         'states': [{'state_id': 's', 'state_type': 'search', 'description': 'd', 'coverage_tags': ['answer']}],
         'coverage_checklist': ['answer: 给出作者出生地所属的英格兰郡名。', 'verification: 提供可核验的证据', 'official sources']})
     assert plan.coverage_checklist == ['answer', 'verification', 'official sources']
+
+
+# ---- raw tool output must not reach the replanner or later workers ----
+
+def big_result(sid='s'):
+    raw = 'x' * 50000
+    return WorkerResult(state_id=sid, status='resolved', candidate_answer='Paris', evidence=[evidence(claim='c', extra='drop me')],
+                        tool_calls=[{'tool': 'search', 'result': raw, 'results': [{'snippet': raw}]}])
+
+
+def test_compact_dict_drops_tool_output_and_keeps_verified_fields():
+    data = big_result().compact_dict()
+    assert 'tool_calls' not in data and data['num_tool_calls'] == 1
+    assert data['evidence'][0]['claim'] == 'c' and 'extra' not in data['evidence'][0]
+    assert len(json.dumps(data)) < 2000
+
+
+@pytest.mark.asyncio
+async def test_replan_and_prior_results_receive_compact_payloads():
+    seen = {}
+
+    async def work(**kwargs):
+        seen.setdefault('prior', []).append(kwargs['prior_results'])
+        sid = kwargs['state'].state_id
+        return big_result(sid) if sid == 'a' else WorkerResult(state_id=sid, status='partial')
+
+    plan = ResearchPlan('x', 'x', coverage_checklist=['answer', 'verification'], states=[
+        ResearchState('a', 'search', 'a', coverage_tags=['answer']),
+        ResearchState('b', 'verify', 'b', dependencies=['a'], coverage_tags=['verification'])])
+    r = offline_runner(plan, work, max_concurrent=1)
+
+    async def replan(**kwargs):
+        seen['replan'] = kwargs['successful_results']
+        return []
+    r.planner.replan = replan
+    await r.run('x')
+    for payload in [seen['replan'], *[p for p in seen['prior'] if p]]:
+        text = json.dumps(payload)
+        assert '"tool_calls"' not in text and len(text) < 5000
