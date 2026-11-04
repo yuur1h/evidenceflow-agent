@@ -96,6 +96,9 @@
     .banner.bad { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 35%, transparent); }
     .banner.warn { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 35%, transparent); }
     .banner.ok { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 35%, transparent); }
+    .banner.info { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+    .assess { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+    .assess li { margin: 2px 0; }
     .banner code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 2px 6px; border-radius: 6px; }
     .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     @media (max-width: 760px) { .modes { grid-template-columns: 1fr; } }
@@ -594,18 +597,31 @@
     function renderResult(r) {
       const meta = r.metadata || {}; const report = r.report || {}; const cov = report.coverage || {};
       const status = meta.research_status || (meta.failed ? "failed" : "partial");
+      const assess = meta.answer_assessment || {};
+      const reasonsHtml = a => {
+        const items = [...(a.reasons || [])];
+        if (a.cross_check && a.cross_check.verdict && a.cross_check.verdict !== "skipped" && !items.some(x => x.startsWith("交叉核验"))) items.push(`交叉核验：${a.cross_check.verdict}${a.cross_check.note ? `（${a.cross_check.note}）` : ""}`);
+        return items.length ? `<ul class="assess">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+      };
       el("resQuestion").textContent = r.question; el("resModeLabel").textContent = MODES[r.task_mode]?.name || r.task_mode;
 
       // status banner
       const b = el("statusBanner");
       if (status === "complete") { b.className = "banner ok"; b.innerHTML = `<div>✅</div><div><b>研究完成：所有需要覆盖的维度都有经核验的证据支持。</b><div class="small" style="margin-top:4px">结论可以直接采用；仍建议点开来源看一眼原文。</div></div>`; }
       else if (status === "failed") { b.className = "banner bad"; b.innerHTML = `<div>❌</div><div><b>研究未能完成。</b><div class="small" style="margin-top:4px">${esc(meta.error || "运行过程中出错，下面是已获得的有限信息。")}</div></div>`; }
+      else if (status === "answered") {
+        const gaps = [...new Set([...(cov.missing || []), ...(cov.evidence_gaps || []), ...(cov.partial_states || []), ...(cov.failed_states || [])])];
+        const lvl = assess.level_label || (assess.level === "high" ? "高" : "中");
+        b.className = "banner info";
+        b.innerHTML = `<div>🔎</div><div><b>已得出结论（可信度${esc(lvl)}）：${assess.independent_sources ?? "多"} 个独立来源的证据相互印证。</b><div class="small" style="margin-top:4px">
+          研究步骤没有全部走完${gaps.length ? `（还缺：${esc(gaps.join("、"))}）` : ""}，但把已收集的证据放在一起看，它们一致指向同一个答案。结论可以采用，建议点开来源核对。</div>${reasonsHtml(assess)}</div>`;
+      }
       else {
         const gaps = [...new Set([...(cov.missing || []), ...(cov.evidence_gaps || [])])];
         b.className = "banner warn";
         b.innerHTML = `<div>⚠️</div><div><b>部分完成：证据不足以给出确定结论。</b><div class="small" style="margin-top:4px">
           它没有编答案，而是把能查到的都列出来了。${gaps.length ? `还缺：${esc(gaps.join("、"))}。` : ""}${cov.open_questions?.length ? `有 ${cov.open_questions.length} 个问题没查清。` : ""}
-          可以试试「深入」重跑，或者把问题拆得更具体。</div></div>`;
+          可以试试「深入」重跑，或者把问题拆得更具体。</div>${reasonsHtml(assess)}</div>`;
       }
 
       // confidence
@@ -618,7 +634,7 @@
         let data = null; try { data = JSON.parse(report.content || ""); } catch (_) { const m = (report.content || "").match(/\{[\s\S]*\}/); if (m) { try { data = JSON.parse(m[0]); } catch (__) {} } }
         data = data || {};
         body += `<div class="answer-big">${esc(r.answer || data.answer || "（无答案）")}</div>`;
-        if (status !== "complete" && data.candidate_answer && data.candidate_answer !== r.answer) body += `<div class="answer-cand">最可能的候选答案：<b>${esc(data.candidate_answer)}</b>（证据不足，仅供参考）</div>`;
+        if (status === "partial" && data.candidate_answer && data.candidate_answer !== r.answer) body += `<div class="answer-cand">最可能的候选答案：<b>${esc(data.candidate_answer)}</b>（证据不足，仅供参考）</div>`;
         if (data.uncertainty) body += `<div class="hint" style="margin-top:8px">${esc(data.uncertainty)}</div>`;
         if (data.supporting_facts?.length) body += `<h3 style="margin-top:16px">支撑事实</h3><ul class="plain">${data.supporting_facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>`;
         el("reportCard").classList.add("hidden");
@@ -700,7 +716,7 @@
     function loadHistory() { try { return JSON.parse(localStorage.getItem(HKEY) || "[]"); } catch (_) { return []; } }
     function saveHistory(r) {
       try {
-        const slim = { ...r, report: r.report ? { content: r.report.content, sources: r.report.sources, coverage: r.report.coverage, confidence: r.report.confidence } : null,
+        const slim = { ...r, metadata: { ...(r.metadata || {}), llm_usage: r.metadata?.llm_usage, answer_assessment: r.metadata?.answer_assessment }, report: r.report ? { content: r.report.content, sources: r.report.sources, coverage: r.report.coverage, confidence: r.report.confidence } : null,
                        states: (r.states || []).map(s => ({ state_id: s.state_id, state_type: s.state_type, description: s.description, status: s.status, backtrack_reason: s.backtrack_reason,
                                  result: s.result ? { candidate_answer: s.result.candidate_answer, evidence: (s.result.evidence || []).map(e => ({ provenance: e.provenance, support: e.support })), open_questions: s.result.open_questions, conflicts: s.result.conflicts, error: s.result.error } : undefined })) };
         const list = [slim, ...loadHistory()].slice(0, 12); localStorage.setItem(HKEY, JSON.stringify(list));
@@ -709,7 +725,7 @@
     function renderHistory() {
       const list = loadHistory();
       el("historyList").innerHTML = list.length ? list.map((h, i) => {
-        const st = h.metadata?.research_status || "partial"; const badge = st === "complete" ? '<span class="badge green">完成</span>' : st === "failed" ? '<span class="badge red">失败</span>' : '<span class="badge amber">部分</span>';
+        const st = h.metadata?.research_status || "partial"; const badge = st === "complete" ? '<span class="badge green">完成</span>' : st === "answered" ? '<span class="badge blue">有结论</span>' : st === "failed" ? '<span class="badge red">失败</span>' : '<span class="badge amber">部分</span>';
         const a = h.task_mode === "multi_hop" ? h.answer : (h.report?.content || h.answer || "").replace(/^>.*\n+/, "").replace(/[#*>]/g, "").slice(0, 120);
         return `<div class="history-item" data-i="${i}"><div style="flex:1"><div class="q">${esc(h.question)}</div><div class="a">${esc(a)}</div><div class="small muted" style="margin-top:4px">${MODES[h.task_mode]?.name || ""} · ${new Date(h.ts).toLocaleString()}</div></div>${badge}</div>`;
       }).join("") : '<div class="muted">还没有记录。</div>';
