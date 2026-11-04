@@ -15,6 +15,7 @@ from deep_research.llm import create_llm, LLMClient
 from deep_research.task_modes import TaskMode
 from deep_research.citation_check import citation_stats, text_overlap
 from deep_research.evidence_quality import usable_evidence, in_time_scope
+from deep_research.confidence import assess_answer, cross_check_with_llm, describe_assessment
 from deep_research.memory.long_term import MemoryEntry
 from deep_research.memory.memory_store import SharedMemoryStore
 from deep_research.planner import DeepResearchPlanner
@@ -60,6 +61,8 @@ class DeepResearchRunner:
         self.max_concurrent = max(1, max_concurrent)
         self.max_replans = max(0, max_replans)
         self.max_adversarial_rounds = max(0, max_adversarial_rounds)
+        # Joint evidence assessment (deep_research.confidence); the LLM cross-check is one small call per run.
+        self.cross_check = os.getenv("EVIDENCEFLOW_CROSS_CHECK", "1").lower() not in {"0", "false", "off"}
         self.state_timeout_seconds = state_timeout_seconds
         self.memory_store = SharedMemoryStore(
             memory_db_path or os.getenv("DEEP_RESEARCH_MEMORY_DB", "data/deep_research_memory.db"),
@@ -214,10 +217,25 @@ class DeepResearchRunner:
             metadata["coverage_complete"] = coverage_report.complete
             metadata["citations"] = citation_stats(
                 [e for r in {r.state_id: r for r in results}.values() for e in r.evidence])
-            metadata["research_status"] = "complete" if coverage_report.complete else "partial"
-            if not coverage_report.complete:
-                final_report.content = self._label_incomplete(final_report.content, coverage_report)
-                final_report.confidence = min(final_report.confidence, 0.35)
+            latest_results = list({r.state_id: r for r in results}.values())
+            assessment = assess_answer(self.task_mode, plan=plan, results=latest_results,
+                                       coverage=coverage_report, synthesized=final_report.content)
+            if not coverage_report.complete and assessment.candidate and getattr(self, "cross_check", False):
+                assessment = await cross_check_with_llm(self.llm, query=query, assessment=assessment,
+                                                        results=latest_results, task_mode=self.task_mode)
+            metadata["answer_assessment"] = assessment.to_dict()
+            if coverage_report.complete:
+                metadata["research_status"] = "complete"
+                final_report.confidence = max(final_report.confidence, assessment.score)
+            elif assessment.deliverable:
+                # Coverage has gaps, but several independent sources agree: deliver with a graded label.
+                metadata["research_status"] = "answered"
+                final_report.content = self._label_answered(final_report.content, coverage_report, assessment)
+                final_report.confidence = assessment.score
+            else:
+                metadata["research_status"] = "partial"
+                final_report.content = self._label_incomplete(final_report.content, coverage_report, assessment)
+                final_report.confidence = min(final_report.confidence, assessment.score, 0.35)
             answer = extract_final_answer(final_report.content) if self.task_mode == TaskMode.MULTI_HOP else final_report.content
             self._emit(
                 {
@@ -537,7 +555,7 @@ class DeepResearchRunner:
             existing.add(state.state_id)
             graph.add_state(state)
 
-    def _label_incomplete(self, content: str, coverage: CoverageReport) -> str:
+    def _label_incomplete(self, content: str, coverage: CoverageReport, assessment=None) -> str:
         import json
         from deep_research.llm import extract_json_object
         detail = "研究未完成，证据不足以支持确定结论。"
@@ -545,12 +563,30 @@ class DeepResearchRunner:
                                   *coverage.partial_states, *coverage.failed_states, *coverage.blocked_states]))
         if gaps:
             detail += "待补充：" + "、".join(gaps)
+        if assessment is not None and assessment.reasons:
+            detail += "联合评估：" + "；".join(assessment.reasons[:3]) + "。"
         if self.task_mode == TaskMode.MULTI_HOP:
             data = extract_json_object(content) or {}
-            data["candidate_answer"] = data.get("answer", "")
+            data["candidate_answer"] = data.get("answer", "") or (assessment.candidate if assessment else "")
             data["answer"] = "证据不足，暂无法确定答案"
             data["confidence"] = "low"
             data["uncertainty"] = detail
+            return json.dumps(data, ensure_ascii=False)
+        return "> " + detail + "\n\n" + content
+
+    def _label_answered(self, content: str, coverage: CoverageReport, assessment) -> str:
+        """Keep the answer; attach the joint-evidence verdict and what was not covered."""
+        import json
+        from deep_research.llm import extract_json_object
+        detail = describe_assessment(assessment, coverage)
+        if self.task_mode == TaskMode.MULTI_HOP:
+            data = extract_json_object(content) or {}
+            if not str(data.get("answer") or "").strip():
+                data["answer"] = assessment.candidate
+            data["confidence"] = assessment.level
+            prior = str(data.get("uncertainty") or "").strip()
+            data["uncertainty"] = (prior + " " if prior else "") + detail
+            data["assessment_reasons"] = assessment.reasons
             return json.dumps(data, ensure_ascii=False)
         return "> " + detail + "\n\n" + content
 

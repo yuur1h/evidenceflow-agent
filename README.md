@@ -74,6 +74,8 @@ Qwen 配置见 [Qwen 接入说明](docs/qwen-setup.md)。配置、请求样例�
 
 已区分 partial 与 success，增加有效来源与时效范围门槛，修复依赖阻塞时的补救流程。API 使用 `metadata.research_status` 和 `coverage_complete` 区分流程结束与研究完成；证据不足时明确返回未完成结果。详见 [第二步记录](docs/optimization-step-2.md)。
 
+第四步：覆盖检查之外增加**多证据联合评估**（`deep_research/confidence.py`）。各节点候选答案聚类投票，统计提及该答案的独立来源数和经核验证据质量，联合覆盖率与节点解决率打分，并由一次小规模模型交叉核验校正。覆盖未完全但多个独立来源一致的结果以 `research_status=answered` 交付（保留答案、标注可信度和缺口）；单一来源、存在矛盾或判定为证据不足的仍为 `partial`。详见 [第四步记录](docs/optimization-step-4.md)。
+
 ### 本地优化第三步：引用溯源核验与评测集
 
 每条引用的 URL 必须出现在该节点的工具输出中，陈述与来源文本做重叠核验，弱支持条目由模型复判；未核验或不被支持的引用降级并不计入覆盖。同时修复了多跳提前停止不可达、兜底重规划丢弃冲突、记忆 ID 不稳定等问题，并加入 25 题评测集与 `evaluation/run_benchmark.py`。详见 [第三步记录](docs/optimization-step-3.md)。首次真实运行（DeepSeek + Serper）结果与发现见 [评测结果](evaluation/benchmark/RESULTS.md)。

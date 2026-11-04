@@ -141,6 +141,8 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "score": round(statistics.fmean(r["score"] for r in items), 3) if items else None,
             "correct_rate": round(sum(1 for r in items if r["correct"]) / len(items), 3) if items else None,
             "complete_rate": round(sum(1 for r in items if r["coverage_complete"]) / len(items), 3) if items else None,
+            # complete or answered: the user got a usable conclusion (deep_research.confidence)
+            "answered_rate": round(sum(1 for r in items if r.get("research_status") in {"complete", "answered"}) / len(items), 3) if items else None,
             "failed": sum(1 for r in items if r["failed"]),
             "mean_elapsed_seconds": round(statistics.fmean(r["elapsed_seconds"] for r in items), 1) if items else None,
             "mean_tokens": round(statistics.fmean(tokens)) if tokens else None,
