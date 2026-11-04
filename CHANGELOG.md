@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Guided research UI at `GET /` (`web/app.html`): task-type cards with examples, 快速/标准/深入 presets with time and token estimates, environment readiness check, live phase stepper, step list and coverage checklist, and a result page that explains complete/partial status, citation verification badges, unresolved gaps and cost. Local history in the browser. `/visualize` remains the developer workbench.
 - `LLM_PROVIDER=deepseek` using DeepSeek's OpenAI-compatible endpoint (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, optional `DEEPSEEK_BASE_URL`). Qwen thinking flags are not forwarded to it.
 
 ### Fixed (from the first live run)

@@ -1,0 +1,19 @@
+[Unit]
+Description=EvidenceFlow Agent (uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/evidenceflow
+Environment=PATH=/opt/evidenceflow/.venv/bin:/usr/bin:/bin
+# huggingface.co is unreachable from the server; the embedding model comes from the mirror.
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/opt/evidenceflow/.venv/bin/python -m uvicorn agent:app --host 127.0.0.1 --port 8000 --workers 1 --timeout-keep-alive 75
+Restart=always
+RestartSec=5
+MemoryMax=1600M
+
+[Install]
+WantedBy=multi-user.target
