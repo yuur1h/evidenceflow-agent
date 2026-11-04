@@ -33,6 +33,7 @@ from evaluation.llm_judge import judge_one
 app = FastAPI(title="EvidenceFlow Agent")
 PROJECT_ROOT = Path(__file__).resolve().parent
 VISUALIZER_HTML = PROJECT_ROOT / "web" / "research_visualizer.html"
+APP_HTML = PROJECT_ROOT / "web" / "app.html"
 
 
 class QueryRequest(BaseModel):
@@ -108,6 +109,13 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse | Streamin
 @app.post("/stream")
 async def stream(req: QueryRequest) -> StreamingResponse:
     return StreamingResponse(_stream_result(req), media_type="text/event-stream")
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/app", response_class=HTMLResponse, include_in_schema=False)
+async def app_page() -> HTMLResponse:
+    """Guided research UI for end users; /visualize stays the developer workbench."""
+    return HTMLResponse(APP_HTML.read_text(encoding="utf-8"))
 
 
 @app.get("/visualize", response_class=HTMLResponse)

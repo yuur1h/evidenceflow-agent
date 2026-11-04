@@ -31,12 +31,12 @@ Windows，Python 3.12.14。`.venv` 复用桌面运行时的系统包；其余依
 .\start-local.ps1
 ```
 
-访问 http://127.0.0.1:8000/visualize 。
+访问 http://127.0.0.1:8000/ （研究助手）或 http://127.0.0.1:8000/visualize （开发者工作台）。
 
 ## 已验证
 
 - requirements.txt 安装完成，pip check 通过。
-- /visualize、/docs、/openapi.json 返回 HTTP 200。
+- /、/app、/visualize、/docs、/openapi.json 返回 HTTP 200。
 - 状态图依赖调度和 coverage 检查通过。
 - 修复 /stream 后台异常未结束队列、请求无限等待的问题；缺少密钥时现返回 Error SSE 并结束。
 - `python smoke_local.py` 可重复上述离线检查。
